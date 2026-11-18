@@ -1,7 +1,7 @@
 /* PDF 여백 자르기 — 오프라인용 서비스 워커.
    앱 파일을 기기에 보관해 인터넷 없이도 열리게 한다. 다른 주소로는 어떤 요청도 보내지 않는다. */
 'use strict';
-const VERSION = '0efef4ed9dd2';
+const VERSION = 'e66e644397ae';
 const CACHE = 'pdfcrop-app-' + VERSION;
 const SHARE_CACHE = 'pdfcrop-share';
 const FILES = [

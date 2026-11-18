@@ -10,6 +10,8 @@
   var MIN_KEEP_PT = 72 / 25.4; // 자르고 남는 폭·높이가 1 mm보다 작으면 오류로 본다
   var LETTER = { x0: 0, y0: 0, x1: 612, y1: 792 };
   var SIDES = ['top', 'bottom', 'left', 'right'];
+  var MAX_RULES = 500;       // 한 카테고리의 규칙 수 (쪽마다 따로 정해도 넉넉하게)
+  var MAX_CATEGORIES = 100;
   var SIDE_LABEL = { top: '위', bottom: '아래', left: '왼쪽', right: '오른쪽' };
 
   var WORDS = {
@@ -410,11 +412,11 @@
     if (!obj || typeof obj !== 'object' || !Array.isArray(obj.categories)) return null;
     var cats = [];
     var seen = {};
-    obj.categories.slice(0, 100).forEach(function (c) {
+    obj.categories.slice(0, MAX_CATEGORIES).forEach(function (c) {
       if (!c || typeof c !== 'object') return;
       var id = typeof c.id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(c.id) && !seen[c.id] ? c.id : uid('c');
       seen[id] = true;
-      var rules = Array.isArray(c.rules) ? c.rules.slice(0, 50) : [];
+      var rules = Array.isArray(c.rules) ? c.rules.slice(0, MAX_RULES) : [];
       var rseen = {};
       cats.push({
         id: id,
@@ -529,6 +531,8 @@
 
   return {
     PT_PER_CM: PT_PER_CM,
+    MAX_RULES: MAX_RULES,
+    MAX_CATEGORIES: MAX_CATEGORIES,
     SIDES: SIDES,
     SIDE_LABEL: SIDE_LABEL,
     normalizeSpec: normalizeSpec,

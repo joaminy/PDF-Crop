@@ -418,6 +418,7 @@
     if (!state.isDefault) scheduleSave();
   }
   function addCat() {
+    if (state.settings.categories.length >= C.MAX_CATEGORIES) { toast('카테고리는 ' + C.MAX_CATEGORIES + '개까지 만들 수 있습니다.'); return; }
     var n = state.settings.categories.length + 1;
     var r = newRule('전체');
     var cat = { id: C.uid('c'), name: '새 카테고리 ' + n, rules: [r] };
@@ -430,6 +431,7 @@
     inp.select();
   }
   function dupCat() {
+    if (state.settings.categories.length >= C.MAX_CATEGORIES) { toast('카테고리는 ' + C.MAX_CATEGORIES + '개까지 만들 수 있습니다.'); return; }
     var src = currentCat();
     var cat = clone(src);
     cat.id = C.uid('c');
@@ -626,6 +628,7 @@
     if (act === 'up' && idx > 0) { cat.rules.splice(idx - 1, 0, cat.rules.splice(idx, 1)[0]); }
     else if (act === 'down' && idx < cat.rules.length - 1) { cat.rules.splice(idx + 1, 0, cat.rules.splice(idx, 1)[0]); }
     else if (act === 'dup') {
+      if (cat.rules.length >= C.MAX_RULES) { toast('한 카테고리에는 규칙을 ' + C.MAX_RULES + '개까지 만들 수 있습니다.'); return; }
       var copy = clone(rule);
       copy.id = C.uid('r');
       cat.rules.splice(idx + 1, 0, copy);
@@ -1267,6 +1270,10 @@
         msg = '카테고리 ' + parsed.categories.length + '개를 가져왔습니다.';
       } else {
         var m = C.mergeCategories(state.settings.categories, parsed.categories);
+        if (m.categories.length > C.MAX_CATEGORIES) {
+          m.categories = m.categories.slice(0, C.MAX_CATEGORIES);
+          toast('카테고리는 ' + C.MAX_CATEGORIES + '개까지라 일부는 가져오지 못했습니다.');
+        }
         state.settings.categories = m.categories;
         state.settings.selectedId = parsed.categories[0].id;
         msg = '카테고리 ' + parsed.categories.length + '개를 가져왔습니다 (새로 추가 ' + m.added + '개, 같은 카테고리 덮어쓰기 ' + m.replaced + '개).';
@@ -1345,6 +1352,7 @@
     $('#catDel').addEventListener('click', delCat);
     $('#addRule').addEventListener('click', function () {
       var cat = currentCat();
+      if (cat.rules.length >= C.MAX_RULES) { toast('한 카테고리에는 규칙을 ' + C.MAX_RULES + '개까지 만들 수 있습니다.'); return; }
       var r = newRule(cat.rules.length ? '' : '전체');
       cat.rules.push(r);
       state.expanded[r.id] = true;
