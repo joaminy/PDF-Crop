@@ -220,6 +220,12 @@ input.invalid, .num.invalid { border-color: var(--bad); background: var(--bad-so
 
 /* 삭제할 쪽 */
 .del-box { border: 1px solid var(--line); border-left: 4px solid var(--bad); border-radius: 12px; padding: 10px 12px 12px; }
+/* 잘라낸 부분 완전히 지우기 */
+.erase-box { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 12px; padding: 6px 12px 12px; display: grid; gap: 6px; }
+.erase-check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-weight: 600; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.erase-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); flex: none; }
+.erase-q[hidden] { display: none; }
+.erase-q select { width: 100%; font-size: 16px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
 
 /* 도움말 */
 .help { border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; }

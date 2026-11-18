@@ -443,12 +443,46 @@
     });
   }
 
+  /** 쪽에 붙은 주석(링크·입력 칸 등)의 참조 목록 */
+  function annotRefs(PDFLib, page) {
+    var a = page.node.context.lookup(page.node.get(PDFLib.PDFName.of('Annots')));
+    return a instanceof PDFLib.PDFArray ? a.asArray().filter(function (r) { return r instanceof PDFLib.PDFRef; }) : [];
+  }
+
   /**
-   * 쪽을 지운다. 쪽 목록에서 빼는 데 그치지 않고, 그 쪽을 가리키던 책갈피·링크·이름 붙은 위치·양식 칸 등을 정리한 뒤
-   * 더는 쓰이지 않는 객체(지운 쪽의 내용·그림·주석)를 파일에서 뺀다. 다른 쪽과 함께 쓰는 글꼴·그림은 남는다.
-   * pages: 지우기 전의 쪽 목록, delIdx: 지울 쪽 번호(0부터, 오름차순)
+   * 쪽 하나를 그림 한 장(보이는 부분만 담은 JPEG)으로 바꾼다.
+   * 쪽 사전을 비워(종류·부모만 남김) 원래 내용·자원·주석·미리보기 그림 등을 모두 떼어 낸다.
+   * 떼어 낸 객체는 cleanupPages가 파일에서 뺀다.
    */
-  function removePages(PDFLib, doc, pages, delIdx) {
+  function replaceWithImage(PDFLib, page, imgRef, wPt, hPt) {
+    var L = PDFLib;
+    var node = page.node;
+    var ctx = node.context;
+    var N = function (s) { return L.PDFName.of(s); };
+    node.keys().forEach(function (k) { if (k !== N('Type') && k !== N('Parent')) node.delete(k); });
+    var uu = Math.max(1, Math.ceil(Math.max(wPt, hPt) / 14400)); // PDF 쪽 크기 한도(200인치)를 넘으면 단위를 키운다
+    var w = r4(wPt / uu), h = r4(hPt / uu);
+    node.set(N('MediaBox'), ctx.obj([0, 0, w, h]));
+    node.set(N('CropBox'), ctx.obj([0, 0, w, h]));
+    node.set(N('Rotate'), ctx.obj(0));
+    if (uu > 1) node.set(N('UserUnit'), ctx.obj(uu));
+    var xo = ctx.obj({});
+    xo.set(N('Im0'), imgRef);
+    var res = ctx.obj({});
+    res.set(N('XObject'), xo);
+    node.set(N('Resources'), res);
+    node.set(N('Contents'), ctx.register(ctx.stream('q ' + w + ' 0 0 ' + h + ' 0 0 cm /Im0 Do Q')));
+  }
+
+  /**
+   * 쪽 삭제·완전히 지우기 뒤의 정리.
+   * 지운 쪽은 쪽 목록에서 빼고, 그 쪽을 가리키던 책갈피·링크·이름 붙은 위치를 정리한다.
+   * 지운 쪽과 그림으로 바꾼 쪽에 있던 주석·입력 칸은 뺀다(그림으로 바꾼 쪽의 것은 그림에 이미 합쳐져 있다).
+   * 끝으로 어디에서도 쓰이지 않는 객체(원래 내용·그림·주석)를 파일에서 뺀다. 다른 쪽과 함께 쓰는 글꼴·그림은 남는다.
+   * pages: 바꾸기 전의 쪽 목록, delIdx: 지울 쪽 번호(0부터, 오름차순), erasedIdx: 그림으로 바꾼 쪽 번호(0부터),
+   * erasedAnnots: 그림으로 바꾸기 전에 그 쪽들에 붙어 있던 주석 참조
+   */
+  function cleanupPages(PDFLib, doc, pages, delIdx, erasedIdx, erasedAnnots) {
     var L = PDFLib;
     var ctx = doc.context;
     var cat = doc.catalog;
@@ -458,6 +492,8 @@
     var isArr = function (o) { return o instanceof L.PDFArray; };
     var delSet = {};
     delIdx.forEach(function (i) { delSet[i] = true; });
+    var erasedSet = new Set();
+    (erasedIdx || []).forEach(function (i) { erasedSet.add(pages[i].ref); });
 
     // 지울 쪽 객체 (같은 객체가 남는 쪽에도 쓰이면 지우지 않는다)
     var keptRefs = new Set();
@@ -465,7 +501,7 @@
     var gone = new Set();
     pages.forEach(function (pg, i) { if (delSet[i] && !keptRefs.has(pg.ref)) gone.add(pg.ref); });
     function annotsOf(pg) { var a = lk(pg.node.get(N('Annots'))); return isArr(a) ? a : null; }
-    var goneAnnots = new Set();
+    var goneAnnots = new Set(erasedAnnots || []);
     pages.forEach(function (pg) {
       if (!gone.has(pg.ref)) return;
       var a = annotsOf(pg);
@@ -628,7 +664,7 @@
         }
         if (ref instanceof L.PDFRef && goneAnnots.has(ref)) return false;
         var p = f.get(N('P'));
-        return !(lk(f.get(N('Subtype'))) === N('Widget') && p instanceof L.PDFRef && gone.has(p));
+        return !(lk(f.get(N('Subtype'))) === N('Widget') && p instanceof L.PDFRef && (gone.has(p) || erasedSet.has(p)));
       };
       var fields = lk(acro.get(N('Fields')));
       if (isArr(fields)) {
@@ -650,7 +686,7 @@
     }
 
     // 쪽 번호 표시(PageLabels): 남는 쪽이 원래 번호를 그대로 보이도록 다시 만든다
-    var pl = lk(cat.get(N('PageLabels')));
+    var pl = delIdx.length ? lk(cat.get(N('PageLabels'))) : null;
     if (isDict(pl)) {
       try {
         var nums = flatten(pl, 'Nums', [], 0).map(function (e) { return [lk(e[0]), lk(e[1])]; })
@@ -720,21 +756,62 @@
     ctx.enumerateIndirectObjects().forEach(function (pair) { if (!reach.has(pair[0])) ctx.delete(pair[0]); });
   }
 
+  /** 그림으로 바꿀 쪽에 대해, 보이는 방향 기준으로 어디를 남길지(pt) */
+  function rasterRequest(geom, item) {
+    var vis = visualSizePt(geom);
+    var cm = item.cm;
+    return {
+      page: item.page,
+      vis: vis,
+      crop: { left: cm.left * PT_PER_CM, top: cm.top * PT_PER_CM, right: cm.right * PT_PER_CM, bottom: cm.bottom * PT_PER_CM },
+      kept: { w: item.kept.w, h: item.kept.h }
+    };
+  }
+
+  function userError(code, msg) { var e = new Error(code); e.user = msg; return e; }
+
+  /**
+   * 그린 그림을 PDF 그림 객체로 넣는다.
+   * shot.gray = { width, height, data }: 회색조 8비트를 zlib으로 압축한 것(무손실, 흑백 문서에 작음)
+   * shot.jpg: JPEG 바이트(색이 있는 쪽)
+   */
+  async function embedShot(PDFLib, doc, shot) {
+    if (shot && shot.gray) {
+      var g = shot.gray;
+      if (!(g.width > 0 && g.height > 0 && g.data && g.data.length)) return null;
+      var ctx = doc.context;
+      return ctx.register(ctx.stream(g.data, {
+        Type: 'XObject', Subtype: 'Image', Width: Math.round(g.width), Height: Math.round(g.height),
+        ColorSpace: 'DeviceGray', BitsPerComponent: 8, Filter: 'FlateDecode'
+      }));
+    }
+    if (shot && shot.jpg && shot.jpg.length) {
+      var img = await doc.embedJpg(shot.jpg);
+      await img.embed();
+      return img.ref;
+    }
+    return null;
+  }
+
   /**
    * 규칙대로 자르고 ‘삭제할 쪽’을 뺀 PDF를 만든다.
    * 자르거나 삭제할 쪽이 하나도 없으면 원본 바이트를 그대로 돌려준다.
+   * opts.erase가 켜져 있으면 자른 쪽마다 opts.rasterize(요청)로 보이는 부분만 그린 JPEG를 받아,
+   * 그 쪽을 그림 한 장으로 바꾸고 원래 내용은 파일에서 뺀다(잘라낸 부분을 복구할 수 없게).
+   * opts.onProgress(끝난 쪽 수, 전체 쪽 수)로 진행 상황을 알린다.
    */
-  async function cropPdf(PDFLib, bytes, rules, delSpec) {
+  async function cropPdf(PDFLib, bytes, rules, delSpec, opts) {
+    opts = opts || {};
     var doc = await loadDoc(PDFLib, bytes);
     var pages = doc.getPages();
     var geoms = pages.map(function (page) { return readGeometry(PDFLib, page); });
     var plan = planDocument(rules, geoms, delSpec);
-    var report = { total: pages.length, cropped: [], kept: [], untouched: [], errors: [], deleted: [] };
+    var report = { total: pages.length, cropped: [], kept: [], untouched: [], errors: [], deleted: [], erased: [] };
+    var cropItems = [];
     plan.pages.forEach(function (item) {
       if (item.status === 'delete') report.deleted.push(item.page);
       else if (item.status === 'crop') {
-        var c = computeCrop(geoms[item.page - 1], item.cm);
-        applyBox(PDFLib, pages[item.page - 1], c.box);
+        cropItems.push(item);
         report.cropped.push(item.page);
       } else if (item.status === 'keep') report.kept.push(item.page);
       else if (item.status === 'none') report.untouched.push(item.page);
@@ -747,7 +824,35 @@
       var all = new Error('all pages deleted'); all.user = '모든 쪽이 삭제되도록 지정되어 있어 결과 파일을 만들 수 없습니다. 적어도 한 쪽은 남겨 주세요.'; throw all;
     }
     if (!report.cropped.length && !report.deleted.length) return { bytes: bytes, report: report, changed: false };
-    if (report.deleted.length) removePages(PDFLib, doc, pages, report.deleted.map(function (p) { return p - 1; }));
+    var erase = !!opts.erase && cropItems.length > 0;
+    if (erase && typeof opts.rasterize !== 'function') throw userError('no rasterizer', '잘라낸 부분을 완전히 지우는 기능을 쓸 수 없는 환경입니다.');
+    var erasedIdx = [];
+    var erasedAnnots = [];
+    if (erase) {
+      var done = 0;
+      for (var k = 0; k < cropItems.length; k++) {
+        var item = cropItems[k];
+        var idx = item.page - 1;
+        var req = rasterRequest(geoms[idx], item);
+        var shot = await opts.rasterize(req);
+        var imgRef = await embedShot(PDFLib, doc, shot);
+        if (!imgRef) throw userError('raster failed', item.page + '쪽을 그림으로 바꾸지 못해 잘라낸 부분을 지우지 못했습니다.');
+        erasedAnnots = erasedAnnots.concat(annotRefs(PDFLib, pages[idx]));
+        replaceWithImage(PDFLib, pages[idx], imgRef, req.kept.w, req.kept.h);
+        erasedIdx.push(idx);
+        report.erased.push(item.page);
+        done++;
+        if (opts.onProgress) await opts.onProgress(done, cropItems.length);
+      }
+    } else {
+      cropItems.forEach(function (item) {
+        var c = computeCrop(geoms[item.page - 1], item.cm);
+        applyBox(PDFLib, pages[item.page - 1], c.box);
+      });
+    }
+    if (report.deleted.length || erasedIdx.length) {
+      cleanupPages(PDFLib, doc, pages, report.deleted.map(function (p) { return p - 1; }), erasedIdx, erasedAnnots);
+    }
     try { doc.setModificationDate(new Date()); } catch (e) { /* 무시 */ }
     var out = await doc.save();
     return { bytes: out, report: report, changed: true };
@@ -811,6 +916,8 @@
         id: id,
         name: cleanStr(c.name, 60) || '이름 없는 카테고리',
         deletePages: cleanStr(c.deletePages, DEL_MAX),
+        erase: c.erase === true,
+        eraseDpi: Number(c.eraseDpi) === 300 ? 300 : 200,
         rules: rules.filter(function (r) { return r && typeof r === 'object'; }).map(function (r) {
           var rid = typeof r.id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(r.id) && !rseen[r.id] ? r.id : uid('r');
           rseen[rid] = true;
@@ -940,7 +1047,9 @@
     deletionPlan: deletionPlan,
     deleteProblem: deleteProblem,
     editDeleteSpec: editDeleteSpec,
-    removePages: removePages,
+    cleanupPages: cleanupPages,
+    replaceWithImage: replaceWithImage,
+    rasterRequest: rasterRequest,
     planDocument: planDocument,
     ruleProblems: ruleProblems,
     looksLikePdf: looksLikePdf,

@@ -1,25 +1,25 @@
 /* PDF 여백 자르기 — 오프라인용 서비스 워커.
    앱 파일을 기기에 보관해 인터넷 없이도 열리게 한다. 다른 주소로는 어떤 요청도 보내지 않는다. */
 'use strict';
-const VERSION = '99947375d882';
+const VERSION = '46ae8a57ac69';
 const CACHE = 'pdfcrop-app-' + VERSION;
 const SHARE_CACHE = 'pdfcrop-share';
 const FILES = [
 [
 "./",
-"5f09d50fa05e31df"
+"3583f55be1ee4c34"
 ],
 [
 "./app.css",
-"3e75e9b41fe0fae1"
+"6c2d61a70dc79f7f"
 ],
 [
 "./app.js",
-"ddc18c577ed77a21"
+"95f0becfa1cdcb05"
 ],
 [
 "./core.js",
-"529727fd9059db41"
+"32cca1e6480a420e"
 ],
 [
 "./icons/apple-touch-icon.png",
@@ -43,7 +43,7 @@ const FILES = [
 ],
 [
 "./index.html",
-"5f09d50fa05e31df"
+"3583f55be1ee4c34"
 ],
 [
 "./manifest.webmanifest",
