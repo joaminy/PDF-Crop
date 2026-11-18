@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ko" data-platform="pwa">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>PDF 여백 자르기</title>
+<meta name="description" content="카테고리별 규칙으로 PDF 여백을 자르는 앱. PDF는 기기 밖으로 나가지 않습니다.">
+<meta name="theme-color" content="#19664f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="PDF 자르기">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>PDF 여백 자르기</h1>
+      <p class="lede">카테고리마다 “어느 페이지를 위·아래·왼쪽·오른쪽 몇 cm 자를지” 규칙을 정해 두면, PDF를 넣을 때마다 그 규칙대로 잘라 줍니다.</p>
+    </div>
+    <div class="privacy-box">
+      <p class="privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>PDF와 카테고리 설정은 이 기기 안에서만 처리·저장되고 밖으로 보내지 않습니다.</p>
+      <p class="app-status" id="appStatus"></p>
+    </div>
+  </header>
+
+  <div class="install" id="installBar" hidden>
+    <div class="install-text"><b>홈 화면에 앱으로 설치</b><span id="installHint"></span></div>
+    <button id="installBtn" class="btn primary" type="button" hidden>앱 설치</button>
+    <button id="installClose" class="icon-btn" type="button" aria-label="설치 안내 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+  </div>
+
+  <main class="layout">
+    <section class="panel" id="rulesPanel" aria-labelledby="h-rules">
+      <h2 id="h-rules"><span class="step">1</span>카테고리와 규칙</h2>
+      <div class="chips" id="catChips" aria-label="카테고리"></div>
+      <div class="cat-head">
+        <div class="field">
+          <label for="catName">카테고리 이름</label>
+          <input id="catName" type="text" maxlength="60" autocomplete="off">
+        </div>
+        <div class="btn-row">
+          <button id="catDup" class="btn" type="button">복제</button>
+          <button id="catDel" class="btn danger" type="button">삭제</button>
+        </div>
+      </div>
+      <ol class="rules" id="ruleList" aria-label="규칙 목록"></ol>
+      <button id="addRule" class="btn-dashed" type="button">+ 규칙 추가</button>
+      <details class="help" id="help">
+        <summary>페이지 지정 방법과 규칙 순서</summary>
+        <dl class="spec">
+          <dt>전체</dt><dd>모든 페이지</dd>
+          <dt>1</dt><dd>1쪽만</dd>
+          <dt>2-5</dt><dd>2쪽부터 5쪽까지 (2~5도 됩니다)</dd>
+          <dt>6-</dt><dd>6쪽부터 끝까지</dd>
+          <dt>홀수 · 짝수</dt><dd>홀수 쪽 · 짝수 쪽</dd>
+          <dt>마지막</dt><dd>마지막 쪽 (3-마지막처럼 범위에도 씁니다)</dd>
+          <dt>1, 3, 7-9</dt><dd>여러 개는 쉼표로 구분</dd>
+        </dl>
+        <ul>
+          <li>쪽 번호는 PDF 파일 안의 순서(첫 쪽이 1)입니다. 종이에 인쇄된 쪽 번호와 다를 수 있습니다.</li>
+          <li>한 페이지에 규칙이 여러 개 해당하면 목록에서 아래쪽 규칙이 적용됩니다. 기본 규칙을 위에, 예외 규칙을 아래에 두세요.</li>
+          <li>어느 규칙에도 해당하지 않는 페이지는 자르지 않습니다.</li>
+          <li>위·아래·왼쪽·오른쪽은 화면에 보이는 방향이 기준입니다. 회전된 페이지도 마찬가지입니다.</li>
+          <li>이 도구는 PDF의 보이는 영역을 줄이는 방식으로 자릅니다. 잘린 부분의 내용은 파일 안에 남아 있으므로, 개인정보를 지우는 용도라면 PDF 편집기의 가리기(redaction) 기능을 쓰세요.</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="panel" id="workPanel" aria-label="작업">
+      <div class="block">
+        <h2><span class="step">2</span>PDF 넣기</h2>
+        <div class="drop" id="dropZone">
+          <input id="fileInput" type="file" accept="application/pdf,.pdf" multiple class="sr-only">
+          <label for="fileInput" class="btn primary">PDF 선택</label>
+          <span>여러 개를 한 번에 넣을 수 있습니다. PC에서는 여기로 끌어다 놓아도 됩니다.</span>
+        </div>
+        <ul class="files" id="fileList" aria-label="넣은 파일"></ul>
+      </div>
+
+      <div class="block">
+        <h2><span class="step">3</span>미리보기</h2>
+        <div class="stage" id="stage" tabindex="0" aria-label="페이지 미리보기. 좌우 화살표 키로 쪽을 넘깁니다.">
+          <div class="sheet" id="sheet">
+            <canvas id="pageCanvas" width="10" height="10"></canvas>
+            <div class="ov" id="ov" hidden>
+              <div class="shade"></div>
+              <div class="band b-top"><span></span></div>
+              <div class="band b-bottom"><span></span></div>
+              <div class="band b-left"><span></span></div>
+              <div class="band b-right"><span></span></div>
+              <div class="keep"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+            </div>
+            <p class="badge" id="badge"></p>
+          </div>
+          <p class="stage-msg" id="stageMsg" hidden></p>
+        </div>
+        <div class="pager">
+          <button id="prevPage" class="icon-btn" type="button" aria-label="이전 쪽"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <span class="pg"><label for="pageNum" class="sr-only">쪽 번호</label><input id="pageNum" type="text" inputmode="numeric" value="1" autocomplete="off"><span>/ <span id="pageTotal">4</span>쪽</span></span>
+          <button id="nextPage" class="icon-btn" type="button" aria-label="다음 쪽"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <div class="seg" id="viewSeg" role="group" aria-label="미리보기 종류" hidden>
+            <button type="button" data-mode="plan" aria-pressed="true">자를 영역</button>
+            <button type="button" data-mode="result" aria-pressed="false">자른 결과</button>
+          </div>
+        </div>
+        <p class="page-info" id="pageInfo" aria-live="polite"></p>
+        <canvas class="strip" id="strip" height="28" role="img" aria-label="쪽별 적용 규칙"></canvas>
+        <ul class="legend" id="legend" aria-label="쪽별 적용 규칙 요약"></ul>
+      </div>
+
+      <div class="block">
+        <h2><span class="step">4</span>자르기</h2>
+        <div class="run">
+          <button id="runBtn" class="btn primary big" type="button">자르기 실행</button>
+          <p class="hint" id="runHint" aria-live="polite"></p>
+        </div>
+        <div class="results" id="results"></div>
+      </div>
+    </section>
+
+    <section class="panel settings" aria-labelledby="h-set">
+      <h2 id="h-set">카테고리 설정 보관</h2>
+      <p class="msg" id="storeStatus"></p>
+      <div class="btn-row">
+        <button id="exportBtn" class="btn" type="button">설정 내보내기 (.json)</button>
+        <label class="btn" for="importInput">설정 가져오기</label>
+        <input id="importInput" type="file" accept=".json,application/json" class="sr-only">
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toastMsg"></span><button id="toastAct" type="button" hidden></button></div>
+
+<script src="core.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
