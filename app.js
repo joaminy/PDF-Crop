@@ -76,14 +76,14 @@
   }
   function defaultSettings() {
     var c1 = {
-      id: C.uid('c'), name: '예시: 시험지', deletePages: '', erase: false, eraseDpi: 200,
+      id: C.uid('c'), name: '예시: 시험지', deletePages: '', erase: false, eraseMode: 'redact', eraseDpi: 200,
       rules: [
         { id: C.uid('r'), label: '본문', pages: '전체', top: '4', bottom: '2', left: '3', right: '3' },
         { id: C.uid('r'), label: '표지', pages: '1', top: '0', bottom: '0', left: '0', right: '0' }
       ]
     };
     var c2 = {
-      id: C.uid('c'), name: '예시: 스캔한 책', deletePages: '', erase: false, eraseDpi: 200,
+      id: C.uid('c'), name: '예시: 스캔한 책', deletePages: '', erase: false, eraseMode: 'redact', eraseDpi: 200,
       rules: [
         { id: C.uid('r'), label: '오른쪽 면', pages: '홀수', top: '1.5', bottom: '2', left: '1', right: '2' },
         { id: C.uid('r'), label: '왼쪽 면', pages: '짝수', top: '1.5', bottom: '2', left: '2', right: '1' }
@@ -111,7 +111,7 @@
   }
   function rulesSig() {
     var cat = currentCat();
-    return cat.id + '|' + JSON.stringify(cat.rules.map(function (r) { return [r.pages, r.top, r.bottom, r.left, r.right]; })) + '|' + (cat.deletePages || '') + '|' + (cat.erase ? 'erase' + (cat.eraseDpi || 200) : '');
+    return cat.id + '|' + JSON.stringify(cat.rules.map(function (r) { return [r.pages, r.top, r.bottom, r.left, r.right]; })) + '|' + (cat.deletePages || '') + '|' + (cat.erase ? 'erase:' + eraseModeOf(cat) + (eraseModeOf(cat) === 'image' ? (cat.eraseDpi || 200) : '') : '');
   }
   /** 지금 카테고리의 규칙과 ‘삭제할 쪽’으로 세운 계획 */
   function planFor(geoms) {
@@ -429,7 +429,7 @@
     if (state.settings.categories.length >= C.MAX_CATEGORIES) { toast('카테고리는 ' + C.MAX_CATEGORIES + '개까지 만들 수 있습니다.'); return; }
     var n = state.settings.categories.length + 1;
     var r = newRule('전체');
-    var cat = { id: C.uid('c'), name: '새 카테고리 ' + n, deletePages: '', erase: false, eraseDpi: 200, rules: [r] };
+    var cat = { id: C.uid('c'), name: '새 카테고리 ' + n, deletePages: '', erase: false, eraseMode: 'redact', eraseDpi: 200, rules: [r] };
     state.settings.categories.push(cat);
     state.expanded[r.id] = true;
     state.settings.selectedId = cat.id;
@@ -458,7 +458,7 @@
     cats.splice(idx, 1);
     var filler = null;
     if (!cats.length) {
-      filler = { id: C.uid('c'), name: '새 카테고리 1', deletePages: '', erase: false, eraseDpi: 200, rules: [newRule('전체')] };
+      filler = { id: C.uid('c'), name: '새 카테고리 1', deletePages: '', erase: false, eraseMode: 'redact', eraseDpi: 200, rules: [newRule('전체')] };
       cats.push(filler);
     }
     var fillerSig = filler ? JSON.stringify(filler) : null;
@@ -711,16 +711,60 @@
 
   /* ---------- 잘라낸 부분 완전히 지우기 ---------- */
 
+  function eraseModeOf(cat) { return cat && cat.eraseMode === 'image' ? 'image' : 'redact'; }
+
   function updateEraseStatus() {
     var chk = $('#eraseChk');
     if (!chk) return;
     var cat = currentCat();
+    var mode = eraseModeOf(cat);
     chk.checked = !!cat.erase;
+    $('#eraseMode').value = mode;
     $('#eraseQ').value = cat.eraseDpi === 300 ? '300' : '200';
-    $('#eraseQBox').hidden = !cat.erase;
-    $('#eraseMsg').textContent = cat.erase
-      ? '자른 쪽은 보이는 부분만 그림으로 저장해, 잘라낸 부분이 파일에 남지 않습니다. 대신 그 쪽의 글자는 선택·검색이 안 되고, 파일이 커지며 시간이 더 걸립니다.'
-      : '꺼 두면 보이는 영역만 줄여서, 잘라낸 부분이 파일 안에 남습니다(PDF 편집 프로그램으로 되살릴 수 있음).';
+    $('#eraseModeBox').hidden = !cat.erase;
+    $('#eraseQBox').hidden = !cat.erase || mode !== 'image';
+    $('#eraseMsg').textContent = !cat.erase
+      ? '꺼 두면 보이는 영역만 줄여서, 잘라낸 부분이 파일 안에 남습니다(PDF 편집 프로그램으로 되살릴 수 있음).'
+      : mode === 'redact'
+        ? '잘라낸 부분의 글자·그림·도형을 PDF 안에서 지웁니다. 남는 부분은 원래 그대로라 글자 선택·검색이 되고 파일 크기도 거의 그대로입니다.'
+        : '자른 쪽은 보이는 부분만 그림으로 저장합니다. 가장 확실하지만, 그 쪽의 글자는 선택·검색이 안 되고 파일이 커지며 시간이 더 걸립니다.';
+  }
+
+  /* 남는 부분은 원래 그대로: MuPDF를 작업 스레드에서 돌린다 (기기 안에서만 처리) */
+  var redactWorker = null, redactSeq = 0, redactJobs = {};
+  function redactInWorker(bytes, requests, onProgress) {
+    return new Promise(function (resolve, reject) {
+      try {
+        if (!redactWorker) {
+          redactWorker = new Worker(new URL('redact-worker.js', document.baseURI).href, { type: 'module' });
+          redactWorker.onmessage = function (ev) {
+            var m = ev.data || {};
+            var job = redactJobs[m.id];
+            if (!job) return;
+            if (m.progress) { if (job.onProgress) job.onProgress(m.progress[0], m.progress[1]); return; }
+            delete redactJobs[m.id];
+            if (m.ok) job.resolve(new Uint8Array(m.bytes));
+            else { var e = new Error(m.error || 'redact'); e.user = '잘라낸 부분을 지우는 도구가 이 파일을 처리하지 못했습니다. (' + (m.error || '') + ') “남는 부분을 그림으로 저장” 방식으로 바꿔 다시 해 보세요.'; job.reject(e); }
+          };
+          redactWorker.onerror = function (ev) {
+            var err = new Error((ev && ev.message) || 'worker');
+            err.user = '잘라낸 부분을 지우는 도구를 불러오지 못했습니다. “남는 부분을 그림으로 저장” 방식으로 바꿔 다시 해 보세요.';
+            Object.keys(redactJobs).forEach(function (k) { redactJobs[k].reject(err); });
+            redactJobs = {};
+            try { redactWorker.terminate(); } catch (e) { /* 무시 */ }
+            redactWorker = null;
+          };
+        }
+        var id = ++redactSeq;
+        redactJobs[id] = { resolve: resolve, reject: reject, onProgress: onProgress };
+        var copy = bytes.slice();
+        var base = new URL(VENDOR + 'mupdf/', document.baseURI).href;
+        redactWorker.postMessage({
+          id: id, bytes: copy, requests: requests,
+          cfg: { mupdfUrl: base + 'mupdf.js', wasmUrl: base + 'mupdf-wasm.wasm.gz' + (IS_PWA ? '' : '.json') }
+        }, [copy.buffer]);
+      } catch (e) { reject(e); }
+    });
   }
 
   var ERASE_MAX_PX = 14000000; // 휴대폰 캔버스 한도 안쪽(약 1,400만 화소)
@@ -1549,7 +1593,9 @@
       : '에서 모두 ' + delPages + '쪽을 삭제합니다.');
     if (errPages) hint += ' 여백이 페이지보다 큰 ' + errPages + '쪽은 자르지 않습니다.';
     if (whole) hint += ' 모든 쪽이 삭제되는 파일 ' + whole + '개는 만들지 않습니다.';
-    if (cat.erase && crop) hint += ' 자른 쪽은 보이는 부분만 그림으로 저장해 잘라낸 부분을 완전히 지웁니다.';
+    if (cat.erase && crop) hint += eraseModeOf(cat) === 'redact'
+      ? ' 잘라낸 부분의 내용은 PDF에서 완전히 지우고, 남는 부분은 원래 그대로 둡니다.'
+      : ' 자른 쪽은 보이는 부분만 그림으로 저장해 잘라낸 부분을 완전히 지웁니다.';
     return { ok: true, hint: hint };
   }
 
@@ -1574,6 +1620,7 @@
     var rules = clone(cat.rules);
     var delSpec = cat.deletePages || '';
     var erase = !!cat.erase;
+    var eraseMode = eraseModeOf(cat);
     var dpi = cat.eraseDpi === 300 ? 300 : 200;
     var sig = rulesSig();
     var ready = state.files.filter(function (f) { return f.status === 'ready'; });
@@ -1591,7 +1638,8 @@
           if (erase) {
             opts = {
               erase: true,
-              rasterize: makeRasterizer(f, dpi),
+              redact: eraseMode === 'redact' ? redactInWorker : null,
+              rasterize: eraseMode === 'image' ? makeRasterizer(f, dpi) : null,
               onProgress: async function (done, total) {
                 hint.textContent = '잘라낸 부분을 지우는 중… (파일 ' + (i + 1) + '/' + ready.length + ' · ' + done + '/' + total + '쪽) ' + f.name;
                 await nextFrame();
@@ -1830,6 +1878,11 @@
     list.addEventListener('input', onRuleInput);
     $('#eraseChk').addEventListener('change', function (e) {
       currentCat().erase = e.target.checked;
+      refresh();
+      scheduleSave();
+    });
+    $('#eraseMode').addEventListener('change', function (e) {
+      currentCat().eraseMode = e.target.value === 'image' ? 'image' : 'redact';
       refresh();
       scheduleSave();
     });

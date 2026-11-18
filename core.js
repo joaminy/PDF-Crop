@@ -793,11 +793,29 @@
     return null;
   }
 
+  /** 남길 영역(box, 회전 전 좌표)과 전혀 겹치지 않는 주석 참조 목록 — 잘라낸 곳에만 있는 메모·입력 칸 등 */
+  function annotsOutside(PDFLib, page, box) {
+    var ctx = page.node.context;
+    return annotRefs(PDFLib, page).filter(function (ref) {
+      var a = ctx.lookup(ref);
+      if (!(a instanceof PDFLib.PDFDict)) return false;
+      var r = ctx.lookup(a.get(PDFLib.PDFName.of('Rect')));
+      if (!(r instanceof PDFLib.PDFArray) || r.size() !== 4) return false;
+      var nums = [];
+      for (var i = 0; i < 4; i++) { var n = num(ctx, r.get(i)); if (!isFinite(n)) return false; nums.push(n); }
+      var x0 = Math.min(nums[0], nums[2]), x1 = Math.max(nums[0], nums[2]);
+      var y0 = Math.min(nums[1], nums[3]), y1 = Math.max(nums[1], nums[3]);
+      return x1 <= box.x0 || x0 >= box.x1 || y1 <= box.y0 || y0 >= box.y1;
+    });
+  }
+
   /**
    * 규칙대로 자르고 ‘삭제할 쪽’을 뺀 PDF를 만든다.
    * 자르거나 삭제할 쪽이 하나도 없으면 원본 바이트를 그대로 돌려준다.
-   * opts.erase가 켜져 있으면 자른 쪽마다 opts.rasterize(요청)로 보이는 부분만 그린 JPEG를 받아,
-   * 그 쪽을 그림 한 장으로 바꾸고 원래 내용은 파일에서 뺀다(잘라낸 부분을 복구할 수 없게).
+   * opts.erase가 켜져 있으면 잘라낸 부분을 복구할 수 없게 한다. 방식은 두 가지다.
+   *  - opts.redact(바이트, 요청들, 진행) 가 있으면: 잘라낸 부분의 글자·그림·도형을 PDF 안에서 지우고(MuPDF),
+   *    남는 부분은 원래 그대로 둔 채 자른다. 잘라낸 곳에만 있는 주석·입력 칸도 뺀다.
+   *  - opts.rasterize(요청) 가 있으면: 자른 쪽마다 보이는 부분만 그린 그림을 받아 그 쪽을 그림 한 장으로 바꾼다.
    * opts.onProgress(끝난 쪽 수, 전체 쪽 수)로 진행 상황을 알린다.
    */
   async function cropPdf(PDFLib, bytes, rules, delSpec, opts) {
@@ -825,10 +843,33 @@
     }
     if (!report.cropped.length && !report.deleted.length) return { bytes: bytes, report: report, changed: false };
     var erase = !!opts.erase && cropItems.length > 0;
-    if (erase && typeof opts.rasterize !== 'function') throw userError('no rasterizer', '잘라낸 부분을 완전히 지우는 기능을 쓸 수 없는 환경입니다.');
+    var redact = erase && typeof opts.redact === 'function';
+    if (erase && !redact && typeof opts.rasterize !== 'function') throw userError('no rasterizer', '잘라낸 부분을 완전히 지우는 기능을 쓸 수 없는 환경입니다.');
     var erasedIdx = [];
     var erasedAnnots = [];
-    if (erase) {
+    if (redact) {
+      // 1) 잘라낸 부분의 내용을 지운 PDF를 받아 다시 연다 (쪽 크기·회전은 그대로)
+      var reqs = cropItems.map(function (item) { return rasterRequest(geoms[item.page - 1], item); });
+      var cleaned = await opts.redact(bytes, reqs, opts.onProgress);
+      if (!cleaned || !cleaned.length) throw userError('redact failed', '잘라낸 부분을 지우지 못했습니다.');
+      doc = await loadDoc(PDFLib, cleaned);
+      pages = doc.getPages();
+      if (pages.length !== geoms.length) throw userError('redact pages', '잘라낸 부분을 지우는 중에 쪽 수가 달라져 멈췄습니다.');
+      // 2) 평소처럼 자르고, 잘라낸 곳에만 있는 주석·입력 칸은 뺀다
+      cropItems.forEach(function (item) {
+        var pg = pages[item.page - 1];
+        var c = computeCrop(readGeometry(PDFLib, pg), item.cm);
+        applyBox(PDFLib, pg, c.box);
+        var out = annotsOutside(PDFLib, pg, c.box);
+        if (out.length) {
+          var arr = pg.node.context.lookup(pg.node.get(PDFLib.PDFName.of('Annots')));
+          for (var j = arr.size() - 1; j >= 0; j--) if (out.indexOf(arr.get(j)) !== -1) arr.remove(j);
+          erasedAnnots = erasedAnnots.concat(out);
+        }
+        report.erased.push(item.page);
+      });
+      report.method = 'redact';
+    } else if (erase) {
       var done = 0;
       for (var k = 0; k < cropItems.length; k++) {
         var item = cropItems[k];
@@ -844,13 +885,14 @@
         done++;
         if (opts.onProgress) await opts.onProgress(done, cropItems.length);
       }
+      report.method = 'image';
     } else {
       cropItems.forEach(function (item) {
         var c = computeCrop(geoms[item.page - 1], item.cm);
         applyBox(PDFLib, pages[item.page - 1], c.box);
       });
     }
-    if (report.deleted.length || erasedIdx.length) {
+    if (report.deleted.length || erase) {
       cleanupPages(PDFLib, doc, pages, report.deleted.map(function (p) { return p - 1; }), erasedIdx, erasedAnnots);
     }
     try { doc.setModificationDate(new Date()); } catch (e) { /* 무시 */ }
@@ -917,6 +959,7 @@
         name: cleanStr(c.name, 60) || '이름 없는 카테고리',
         deletePages: cleanStr(c.deletePages, DEL_MAX),
         erase: c.erase === true,
+        eraseMode: c.eraseMode === 'image' ? 'image' : 'redact',
         eraseDpi: Number(c.eraseDpi) === 300 ? 300 : 200,
         rules: rules.filter(function (r) { return r && typeof r === 'object'; }).map(function (r) {
           var rid = typeof r.id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(r.id) && !rseen[r.id] ? r.id : uid('r');
@@ -1049,6 +1092,7 @@
     editDeleteSpec: editDeleteSpec,
     cleanupPages: cleanupPages,
     replaceWithImage: replaceWithImage,
+    annotsOutside: annotsOutside,
     rasterRequest: rasterRequest,
     planDocument: planDocument,
     ruleProblems: ruleProblems,

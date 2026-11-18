@@ -8,7 +8,7 @@
 <title>PDF 여백 자르기</title>
 <meta name="description" content="카테고리별 규칙으로 PDF 여백을 자르는 앱. PDF는 기기 밖으로 나가지 않습니다.">
 <meta name="theme-color" content="#19664f">
-<meta name="app-build" content="2026.11.18 15:42">
+<meta name="app-build" content="2026.11.18 16:15">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PDF 자르기">
@@ -66,6 +66,13 @@
           <span>잘라낸 부분 완전히 지우기 (복구 불가)</span>
         </label>
         <p class="msg" id="eraseMsg"></p>
+        <div class="field erase-q" id="eraseModeBox" hidden>
+          <label for="eraseMode">지우는 방식</label>
+          <select id="eraseMode">
+            <option value="redact">남는 부분은 원래 그대로 (권장)</option>
+            <option value="image">남는 부분을 그림으로 저장 (가장 확실)</option>
+          </select>
+        </div>
         <div class="field erase-q" id="eraseQBox" hidden>
           <label for="eraseQ">그림 화질</label>
           <select id="eraseQ">
@@ -92,8 +99,11 @@
           <li>“삭제할 쪽”에 적은 쪽은 여백 규칙과 상관없이 결과 PDF에서 통째로 빠집니다. 쓰는 방법은 위 페이지 지정과 같고, 쪽 번호는 원본 PDF 기준입니다. 미리보기에서 “이 쪽 삭제”를 눌러 넣거나 “되살리기”로 뺄 수도 있습니다.</li>
           <li>미리보기의 점선 테두리를 끌어서 여백을 정할 수도 있습니다. 끌면 그 쪽에 적용된 규칙의 숫자가 바뀌고, 같은 규칙을 쓰는 다른 쪽도 함께 바뀝니다. 그 쪽만 바꾸려면 “이 쪽만 따로”를 먼저 누르세요.</li>
           <li>위·아래·왼쪽·오른쪽은 화면에 보이는 방향이 기준입니다. 회전된 페이지도 마찬가지입니다.</li>
-          <li>이 도구는 기본적으로 PDF의 보이는 영역만 줄이는 방식으로 자르므로, 잘린 부분의 내용이 파일 안에 남습니다. 잘린 부분을 되살릴 수 없게 하려면 카테고리에서 “잘라낸 부분 완전히 지우기”를 켜세요. 자른 쪽이 보이는 부분만 담은 그림으로 저장되어 잘린 부분은 파일에 남지 않습니다(그 쪽의 글자는 선택·검색이 안 되고 파일이 커집니다). 자르지 않은 쪽은 그대로 둡니다.</li>
+          <li>이 도구는 기본적으로 PDF의 보이는 영역만 줄이는 방식으로 자르므로, 잘린 부분의 내용이 파일 안에 남습니다. 잘린 부분을 되살릴 수 없게 하려면 카테고리에서 “잘라낸 부분 완전히 지우기”를 켜세요. 자르지 않은 쪽은 그대로 둡니다.</li>
+          <li>“남는 부분은 원래 그대로” 방식은 잘라낸 곳의 글자를 한 글자씩, 그림을 점 단위로 지우고, 잘라낸 곳에만 있는 도형·메모·입력 칸도 지웁니다. 남는 부분은 원래 PDF 그대로입니다. 다만 자르는 선에 걸친 글자는 통째로 지워지고, 자르는 선을 가로지르는 선·도형·메모는 통째로 남습니다.</li>
+          <li>“남는 부분을 그림으로 저장” 방식은 자른 쪽을 보이는 부분만 담은 그림으로 바꿔 가장 확실하게 지웁니다. 그 쪽의 글자는 선택·검색이 안 되고 파일이 커집니다.</li>
           <li>“삭제할 쪽”으로 뺀 쪽은 내용까지 결과 파일에서 빠지고, 그 쪽을 가리키던 책갈피·링크·입력 칸도 함께 정리됩니다.</li>
+          <li>이 앱은 GNU AGPL-3.0 라이선스로 공개되어 있으며 MuPDF·pdf.js·pdf-lib를 씁니다. 소스: <a href="https://github.com/joaminy/PDF-Crop" target="_blank" rel="noopener">github.com/joaminy/PDF-Crop</a></li>
         </ul>
       </details>
     </section>
