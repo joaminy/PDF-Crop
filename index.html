@@ -8,7 +8,7 @@
 <title>PDF 여백 자르기</title>
 <meta name="description" content="카테고리별 규칙으로 PDF 여백을 자르는 앱. PDF는 기기 밖으로 나가지 않습니다.">
 <meta name="theme-color" content="#19664f">
-<meta name="app-build" content="2026.11.18 13:04">
+<meta name="app-build" content="2026.11.18 14:01">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PDF 자르기">
@@ -23,7 +23,7 @@
   <header class="top">
     <div>
       <h1>PDF 여백 자르기</h1>
-      <p class="lede">카테고리마다 “어느 페이지를 위·아래·왼쪽·오른쪽 몇 cm 자를지” 규칙을 정해 두면, PDF를 넣을 때마다 그 규칙대로 잘라 줍니다.</p>
+      <p class="lede">카테고리마다 “어느 페이지를 위·아래·왼쪽·오른쪽 몇 cm 자를지” 규칙을 정해 두면, PDF를 넣을 때마다 그 규칙대로 잘라 줍니다. 필요 없는 쪽은 통째로 뺄 수도 있습니다.</p>
     </div>
     <div class="privacy-box">
       <p class="privacy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>PDF와 카테고리 설정은 이 기기 안에서만 처리·저장되고 밖으로 보내지 않습니다.</p>
@@ -53,8 +53,15 @@
       </div>
       <ol class="rules" id="ruleList" aria-label="규칙 목록"></ol>
       <button id="addRule" class="btn-dashed" type="button">+ 규칙 추가</button>
+      <div class="del-box">
+        <div class="field">
+          <label for="delPages">삭제할 쪽 (선택)</label>
+          <input id="delPages" type="text" maxlength="2000" placeholder="예: 1, 마지막 · 비워 두면 삭제하지 않음" autocomplete="off" aria-describedby="delMsg">
+          <p class="msg" id="delMsg"></p>
+        </div>
+      </div>
       <details class="help" id="help">
-        <summary>페이지 지정 방법과 규칙 순서</summary>
+        <summary>페이지 지정 방법, 규칙 순서, 쪽 삭제</summary>
         <dl class="spec">
           <dt>전체</dt><dd>모든 페이지</dd>
           <dt>1</dt><dd>1쪽만</dd>
@@ -68,9 +75,10 @@
           <li>쪽 번호는 PDF 파일 안의 순서(첫 쪽이 1)입니다. 종이에 인쇄된 쪽 번호와 다를 수 있습니다.</li>
           <li>한 페이지에 규칙이 여러 개 해당하면 목록에서 아래쪽 규칙이 적용됩니다. 기본 규칙을 위에, 예외 규칙을 아래에 두세요.</li>
           <li>어느 규칙에도 해당하지 않는 페이지는 자르지 않습니다.</li>
+          <li>“삭제할 쪽”에 적은 쪽은 여백 규칙과 상관없이 결과 PDF에서 통째로 빠집니다. 쓰는 방법은 위 페이지 지정과 같고, 쪽 번호는 원본 PDF 기준입니다. 미리보기에서 “이 쪽 삭제”를 눌러 넣거나 “되살리기”로 뺄 수도 있습니다.</li>
           <li>미리보기의 점선 테두리를 끌어서 여백을 정할 수도 있습니다. 끌면 그 쪽에 적용된 규칙의 숫자가 바뀌고, 같은 규칙을 쓰는 다른 쪽도 함께 바뀝니다. 그 쪽만 바꾸려면 “이 쪽만 따로”를 먼저 누르세요.</li>
           <li>위·아래·왼쪽·오른쪽은 화면에 보이는 방향이 기준입니다. 회전된 페이지도 마찬가지입니다.</li>
-          <li>이 도구는 PDF의 보이는 영역을 줄이는 방식으로 자릅니다. 잘린 부분의 내용은 파일 안에 남아 있으므로, 개인정보를 지우는 용도라면 PDF 편집기의 가리기(redaction) 기능을 쓰세요.</li>
+          <li>이 도구는 PDF의 보이는 영역을 줄이는 방식으로 자릅니다. 잘린 부분의 내용은 파일 안에 남아 있으므로, 개인정보를 지우는 용도라면 PDF 편집기의 가리기(redaction) 기능을 쓰세요. 다만 “삭제할 쪽”으로 뺀 쪽은 내용까지 결과 파일에서 빠지고, 그 쪽을 가리키던 책갈피·링크·입력 칸도 함께 정리됩니다.</li>
         </ul>
       </details>
     </section>
@@ -99,6 +107,7 @@
               <div class="band b-right"><span></span></div>
               <div class="keep"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i><span class="h e-t" data-edge="t"></span><span class="h e-b" data-edge="b"></span><span class="h e-l" data-edge="l"></span><span class="h e-r" data-edge="r"></span><span class="h c-tl" data-edge="tl"></span><span class="h c-tr" data-edge="tr"></span><span class="h c-bl" data-edge="bl"></span><span class="h c-br" data-edge="br"></span></div>
             </div>
+            <div class="gone-ov" id="gone" hidden><span>삭제할 쪽</span></div>
             <p class="badge" id="badge"></p>
           </div>
           <p class="stage-msg" id="stageMsg" hidden></p>
@@ -112,7 +121,7 @@
             <button type="button" data-mode="result" aria-pressed="false">자른 결과</button>
           </div>
         </div>
-        <div class="drag-hint" id="dragHint" hidden><span></span><button id="splitBtn" class="btn small" type="button" hidden>이 쪽만 따로</button></div>
+        <div class="drag-hint" id="dragHint" hidden><span></span><button id="splitBtn" class="btn small" type="button" hidden>이 쪽만 따로</button><button id="delPageBtn" class="btn small danger" type="button">이 쪽 삭제</button></div>
         <p class="page-info" id="pageInfo" aria-live="polite"></p>
         <canvas class="strip" id="strip" height="28" role="img" aria-label="쪽별 적용 규칙"></canvas>
         <ul class="legend" id="legend" aria-label="쪽별 적용 규칙 요약"></ul>

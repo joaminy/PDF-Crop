@@ -218,6 +218,9 @@ input.invalid, .num.invalid { border-color: var(--bad); background: var(--bad-so
 }
 .mini-keep { position: absolute; background: var(--surface); outline: 1.5px dashed var(--rc); }
 
+/* 삭제할 쪽 */
+.del-box { border: 1px solid var(--line); border-left: 4px solid var(--bad); border-radius: 12px; padding: 10px 12px 12px; }
+
 /* 도움말 */
 .help { border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; }
 .help summary { cursor: pointer; padding: 12px 0; font-weight: 600; font-size: 14px; }
@@ -288,6 +291,17 @@ input.invalid, .num.invalid { border-color: var(--bad); background: var(--bad-so
   background: rgba(20, 28, 25, 0.86); color: #fff; font-size: 12px; line-height: 1.35; padding: 4px 8px; border-radius: 6px;
 }
 .badge.err { background: #9b1c12; }
+/* 삭제할 쪽: 쪽 전체에 옅은 빨간 빗금과 가운데 표시 */
+.gone-ov {
+  position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 2;
+  background: repeating-linear-gradient(135deg, rgba(180, 35, 24, 0.26) 0 10px, rgba(180, 35, 24, 0.1) 10px 20px);
+  box-shadow: inset 0 0 0 3px #b42318;
+}
+.gone-ov[hidden] { display: none; }
+.gone-ov span {
+  font-weight: 700; font-size: 16px; line-height: 1.2; color: #fff; background: #b42318;
+  padding: 8px 16px; border-radius: 999px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
 .badge:empty { display: none; }
 /* 끌어서 여백 정하기: 손가락으로 잡기 쉽게 잡는 영역을 넓게 둔다 */
 .h { position: absolute; pointer-events: auto; touch-action: none; z-index: 2; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
@@ -326,7 +340,7 @@ input.invalid, .num.invalid { border-color: var(--bad); background: var(--bad-so
 .seg button { border: 0; background: transparent; padding: 7px 12px; cursor: pointer; font-size: 14px; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .page-info { margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; }
-.page-info.err { color: var(--bad); }
+.page-info.err, .page-info.del { color: var(--bad); }
 .strip { display: block; width: 100%; height: 28px; cursor: pointer; touch-action: none; }
 .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .legend button {
@@ -336,6 +350,8 @@ input.invalid, .num.invalid { border-color: var(--bad); background: var(--bad-so
 .legend button:hover { border-color: var(--accent); }
 .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; margin-top: 3px; background: var(--sc); }
 .sw.light { opacity: 0.45; }
+.sw.del { background: transparent; border: 2px solid var(--sc); position: relative; }
+.sw.del::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; background: var(--sc); }
 .legend b { font-weight: 600; }
 .legend .lpages { color: var(--muted); font-variant-numeric: tabular-nums; }
 

@@ -76,14 +76,14 @@
   }
   function defaultSettings() {
     var c1 = {
-      id: C.uid('c'), name: '예시: 시험지',
+      id: C.uid('c'), name: '예시: 시험지', deletePages: '',
       rules: [
         { id: C.uid('r'), label: '본문', pages: '전체', top: '4', bottom: '2', left: '3', right: '3' },
         { id: C.uid('r'), label: '표지', pages: '1', top: '0', bottom: '0', left: '0', right: '0' }
       ]
     };
     var c2 = {
-      id: C.uid('c'), name: '예시: 스캔한 책',
+      id: C.uid('c'), name: '예시: 스캔한 책', deletePages: '',
       rules: [
         { id: C.uid('r'), label: '오른쪽 면', pages: '홀수', top: '1.5', bottom: '2', left: '1', right: '2' },
         { id: C.uid('r'), label: '왼쪽 면', pages: '짝수', top: '1.5', bottom: '2', left: '2', right: '1' }
@@ -111,7 +111,12 @@
   }
   function rulesSig() {
     var cat = currentCat();
-    return cat.id + '|' + JSON.stringify(cat.rules.map(function (r) { return [r.pages, r.top, r.bottom, r.left, r.right]; }));
+    return cat.id + '|' + JSON.stringify(cat.rules.map(function (r) { return [r.pages, r.top, r.bottom, r.left, r.right]; })) + '|' + (cat.deletePages || '');
+  }
+  /** 지금 카테고리의 규칙과 ‘삭제할 쪽’으로 세운 계획 */
+  function planFor(geoms) {
+    var cat = currentCat();
+    return C.planDocument(cat.rules, geoms, cat.deletePages || '');
   }
 
   /* ---------- 플랫폼 기능 (저장·다운로드) ---------- */
@@ -404,6 +409,8 @@
     var cat = currentCat();
     var inp = $('#catName');
     if (document.activeElement !== inp) inp.value = cat.name;
+    var del = $('#delPages');
+    if (del && document.activeElement !== del) del.value = cat.deletePages || '';
   }
 
   function selectCat(id) {
@@ -421,7 +428,7 @@
     if (state.settings.categories.length >= C.MAX_CATEGORIES) { toast('카테고리는 ' + C.MAX_CATEGORIES + '개까지 만들 수 있습니다.'); return; }
     var n = state.settings.categories.length + 1;
     var r = newRule('전체');
-    var cat = { id: C.uid('c'), name: '새 카테고리 ' + n, rules: [r] };
+    var cat = { id: C.uid('c'), name: '새 카테고리 ' + n, deletePages: '', rules: [r] };
     state.settings.categories.push(cat);
     state.expanded[r.id] = true;
     state.settings.selectedId = cat.id;
@@ -450,7 +457,7 @@
     cats.splice(idx, 1);
     var filler = null;
     if (!cats.length) {
-      filler = { id: C.uid('c'), name: '새 카테고리 1', rules: [newRule('전체')] };
+      filler = { id: C.uid('c'), name: '새 카테고리 1', deletePages: '', rules: [newRule('전체')] };
       cats.push(filler);
     }
     var fillerSig = filler ? JSON.stringify(filler) : null;
@@ -555,9 +562,13 @@
       if (!parsed.ok) { pMsg.textContent = parsed.error; pMsg.classList.add('err'); }
       else if (pr) {
         var where = hasFile ? '이 파일' : '예시';
+        var delNote = pr.deleted && pr.deleted.length ? ' · 삭제할 ' + C.compressPages(pr.deleted, 5) + '쪽은 빠짐' : '';
         if (pr.pages.length) {
-          pMsg.textContent = where + '에서 ' + C.compressPages(pr.pages, 8) + '쪽 (' + pr.pages.length + '쪽)' + (pr.beyond ? ' · 파일이 ' + plan.total + '쪽까지라 나머지는 건너뜀' : '');
+          pMsg.textContent = where + '에서 ' + C.compressPages(pr.pages, 8) + '쪽 (' + pr.pages.length + '쪽)' + delNote + (pr.beyond ? ' · 파일이 ' + plan.total + '쪽까지라 나머지는 건너뜀' : '');
           if (pr.beyond) pMsg.classList.add('warn');
+        } else if (pr.deleted && pr.deleted.length) {
+          pMsg.textContent = '이 규칙이 맞는 ' + C.compressPages(pr.deleted, 8) + '쪽은 모두 ‘삭제할 쪽’이라 결과에서 빠집니다.';
+          pMsg.classList.add('warn');
         } else if (pr.matched) {
           pMsg.textContent = '아래 규칙이 같은 쪽을 모두 덮어서, 이 규칙이 적용되는 쪽이 없습니다.';
           pMsg.classList.add('warn');
@@ -665,6 +676,88 @@
     rule[k] = e.target.value;
     refresh();
     scheduleSave();
+  }
+
+  /* ---------- 쪽 삭제 ---------- */
+
+  function updateDelStatus() {
+    var inp = $('#delPages');
+    var msg = $('#delMsg');
+    if (!inp || !msg) return;
+    var spec = currentCat().deletePages || '';
+    var plan = state.plan;
+    var src = previewSource();
+    msg.className = 'msg';
+    var err = C.deleteProblem(spec);
+    inp.classList.toggle('invalid', !!err);
+    if (err) { msg.textContent = err; msg.classList.add('err'); return; }
+    var d = plan && plan.del;
+    if (!d || d.empty) { msg.textContent = '여기에 적은 쪽은 여백 규칙과 상관없이 결과 PDF에서 통째로 빠집니다.'; return; }
+    var where = src.kind === 'file' ? '이 파일' : '예시';
+    if (!d.pages.length) {
+      msg.textContent = where + '에는 해당하는 쪽이 없습니다' + (d.beyond ? ' (파일이 ' + plan.total + '쪽까지입니다).' : '.');
+      msg.classList.add('warn');
+      return;
+    }
+    if (d.pages.length >= plan.total) {
+      msg.textContent = where + '의 모든 쪽(' + plan.total + '쪽)이 들어 있습니다. 적어도 한 쪽은 남겨야 결과 파일을 만들 수 있습니다.';
+      msg.classList.add('err');
+      return;
+    }
+    msg.textContent = where + '에서 ' + C.compressPages(d.pages, 8) + '쪽 (' + d.pages.length + '쪽)을 삭제합니다 → 결과 ' + plan.remain + '쪽' + (d.beyond ? ' · 파일이 ' + plan.total + '쪽까지라 나머지는 건너뜀' : '');
+    if (d.beyond) msg.classList.add('warn');
+  }
+
+  function focusDelInput() {
+    var inp = $('#delPages');
+    if (!inp) return;
+    try { inp.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { inp.scrollIntoView(); }
+    try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); }
+  }
+
+  /** 미리보기에서 보는 쪽을 ‘삭제할 쪽’에 넣거나 뺀다 */
+  function togglePageDeletion() {
+    var plan = state.plan;
+    var item = plan && plan.pages[state.page - 1];
+    if (!item || showingResult()) return;
+    var cat = currentCat();
+    var before = cat.deletePages || '';
+    var page = state.page;
+    var adding = !item.deleted;
+    if (adding && plan.remain <= 1) { toast('적어도 한 쪽은 남겨야 해서 이 쪽은 삭제할 수 없습니다.'); return; }
+    var r = C.editDeleteSpec(before, page, plan.total, adding);
+    if (!r.ok) {
+      toast(r.reason === 'pattern'
+        ? page + '쪽은 ‘' + r.word + '’로 지정되어 있어 이 쪽만 되살릴 수 없습니다. ‘삭제할 쪽’ 칸을 직접 고쳐 주세요.'
+        : '‘삭제할 쪽’ 칸에 고칠 곳이 있습니다. 먼저 고쳐 주세요.');
+      focusDelInput();
+      return;
+    }
+    if (!r.changed) return;
+    if (r.spec.length > C.DEL_MAX) { toast('‘삭제할 쪽’ 칸이 너무 길어 더 넣을 수 없습니다. 2-9처럼 범위로 묶어 적어 주세요.'); focusDelInput(); return; }
+    cat.deletePages = r.spec;
+    var catId = cat.id;
+    renderCatHead(); refresh(); scheduleSave();
+    var msg = adding
+      ? page + '쪽을 ‘삭제할 쪽’에 넣었습니다. 이 카테고리로 만드는 결과 PDF에서 빠집니다.'
+      : page + '쪽을 되살렸습니다. 삭제할 쪽: ' + (r.spec || '없음');
+    toast(msg, {
+      label: '되돌리기',
+      run: function () {
+        var c = catById(catId);
+        if (!c) return;
+        c.deletePages = before;
+        renderCatHead(); refresh(); scheduleSave();
+      }
+    });
+  }
+
+  /** 원본 p쪽이 결과 PDF의 몇 쪽인지 (삭제되어 없으면 0) */
+  function resultPageOf(res, p) {
+    var del = (res && res.report && res.report.deleted) || [];
+    var n = 0;
+    for (var i = 0; i < del.length; i++) { if (del[i] === p) return 0; if (del[i] < p) n++; }
+    return p - n;
   }
 
   /* ---------- 파일 ---------- */
@@ -862,6 +955,14 @@
     var res = viewableResult(src.file);
     var useResult = state.previewMode === 'result' && !!res;
     var holder = useResult ? res : src.file;
+    var pageNo = useResult ? resultPageOf(res, state.page) : state.page;
+    if (!pageNo) {
+      state.sheetKey = null;
+      showStageMessage(state.page + '쪽은 삭제되어 자른 결과에 없습니다. 다른 쪽으로 넘기거나 “자를 영역”을 눌러 원본을 보세요.');
+      applyOverlay();
+      renderPageInfo();
+      return;
+    }
     var geom = src.geoms[state.page - 1];
     var vis = C.visualSizePt(geom);
     var key = (useResult ? 'res:' : 'src:') + src.file.id;
@@ -877,7 +978,7 @@
     try {
       var doc = await docFor(holder);
       if (seq !== previewSeq) return;
-      var page = await doc.getPage(state.page);
+      var page = await doc.getPage(pageNo);
       if (seq !== previewSeq) return;
       var vp1 = page.getViewport({ scale: 1 });
       var sz = fitSize(vp1.width, vp1.height);
@@ -946,12 +1047,15 @@
     var plan = state.plan;
     var item = plan && plan.pages[state.page - 1];
     var cat = currentCat();
+    var goneEl = $('#gone');
+    if (goneEl) goneEl.hidden = !(item && item.deleted && !showingResult());
     if (showingResult()) {
       ov.hidden = true;
       badge.textContent = extraNote || '자른 결과';
       return;
     }
     if (!item) { ov.hidden = true; badge.textContent = extraNote || ''; return; }
+    if (item.deleted) { ov.hidden = true; badge.textContent = extraNote || ''; return; }
     var rule = item.rule >= 0 ? cat.rules[item.rule] : null;
     var rname = rule ? '규칙 ' + (item.rule + 1) + (rule.label ? ' · ' + rule.label : '') : '';
     var cm = frameMargins(item);
@@ -1033,7 +1137,7 @@
     var hEl = e.target.closest('.h');
     if (!hEl || drag || showingResult()) return;
     var item = state.plan && state.plan.pages[state.page - 1];
-    if (!item) return;
+    if (!item || item.deleted) return;
     e.preventDefault();
     var sheet = $('#sheet');
     var fm = frameMargins(item);
@@ -1104,7 +1208,7 @@
     if (!dragRaf) {
       dragRaf = requestAnimationFrame(function () {
         dragRaf = 0;
-        state.plan = C.planDocument(currentCat().rules, previewSource().geoms);
+        state.plan = planFor(previewSource().geoms);
         applyOverlay();
         renderPageInfo();
         if (drag) syncRuleInputs(drag.ruleId);
@@ -1176,6 +1280,18 @@
     var item = plan && plan.pages[state.page - 1];
     if (!item || showingResult() || src.kind === 'loading' || src.kind === 'error') { box.hidden = true; return; }
     box.hidden = false;
+    var delBtn = $('#delPageBtn');
+    if (item.deleted) {
+      txt.textContent = '이 쪽은 ‘삭제할 쪽’에 들어 있어 결과 PDF에서 빠집니다.';
+      btn.hidden = true;
+      delBtn.textContent = '되살리기';
+      delBtn.classList.remove('danger');
+      delBtn.setAttribute('aria-label', state.page + '쪽 되살리기');
+      return;
+    }
+    delBtn.textContent = '이 쪽 삭제';
+    delBtn.classList.add('danger');
+    delBtn.setAttribute('aria-label', state.page + '쪽 삭제');
     var pr = item.rule >= 0 ? plan.perRule[item.rule] : null;
     var shared = !!(pr && pr.pages.length > 1);
     var others = shared ? C.compressPages(pr.pages, 4) : '';
@@ -1228,11 +1344,13 @@
     var rname = rule ? '규칙 ' + (item.rule + 1) + (rule.label ? '(' + rule.label + ')' : '') : '';
     var pre = (src.kind === 'sample' ? '예시 ' : '') + state.page + '쪽 · ';
     if (showingResult()) {
+      if (!resultPageOf(viewableResult(src.file), state.page)) { el.textContent = pre + '삭제되어 자른 결과에 없음'; el.className = 'page-info del'; return; }
       var rs = state.shownResultSize;
       el.textContent = pre + '자른 결과' + (rs ? ' · ' + C.fmtSize(rs.w, rs.h) : '');
       return;
     }
-    if (item.status === 'crop') el.textContent = pre + rname + ' 적용 · ' + C.fmtSize(item.orig.w, item.orig.h) + ' → ' + C.fmtSize(item.kept.w, item.kept.h);
+    if (item.status === 'delete') { el.textContent = pre + '삭제할 쪽 (' + C.fmtSize(item.orig.w, item.orig.h) + ')'; el.className = 'page-info del'; }
+    else if (item.status === 'crop') el.textContent = pre + rname + ' 적용 · ' + C.fmtSize(item.orig.w, item.orig.h) + ' → ' + C.fmtSize(item.kept.w, item.kept.h);
     else if (item.status === 'keep') el.textContent = pre + rname + ' 적용 · 자르지 않음 (' + C.fmtSize(item.orig.w, item.orig.h) + ')';
     else if (item.status === 'none') el.textContent = pre + '해당 규칙 없음 · 자르지 않음 (' + C.fmtSize(item.orig.w, item.orig.h) + ')';
     else { el.textContent = pre + rname + ': ' + item.error; el.className = 'page-info err'; }
@@ -1265,9 +1383,15 @@
     var cw = W / n;
     var gap = cw >= 8 ? 2 : cw >= 3 ? 1 : 0;
     plan.pages.forEach(function (it, i) {
+      var x0 = i * cw + gap / 2, w0 = Math.max(cw - gap, 0.75);
+      if (it.status === 'delete') {
+        c.globalAlpha = 0.25; c.fillStyle = col.bad; c.fillRect(x0, 7, w0, H - 14);
+        c.globalAlpha = 1; c.fillRect(x0, H / 2 - 1.5, w0, 3);
+        return;
+      }
       c.globalAlpha = it.status === 'keep' ? 0.45 : 1;
       c.fillStyle = it.status === 'error' ? col.bad : it.status === 'none' ? col.none : col.rules[it.rule % RULE_COLORS];
-      c.fillRect(i * cw + gap / 2, 7, Math.max(cw - gap, 0.75), H - 14);
+      c.fillRect(x0, 7, w0, H - 14);
     });
     c.globalAlpha = 1;
     var x = (state.page - 1) * cw;
@@ -1275,7 +1399,7 @@
     c.lineWidth = 2;
     c.strokeRect(Math.max(1, x), 2, Math.max(cw, 3) - (x <= 0 ? 1 : 0), H - 4);
     var cat = currentCat();
-    cv.setAttribute('aria-label', '쪽별 적용 규칙: 전체 ' + n + '쪽 중 자를 쪽 ' + plan.counts.crop + ', 그대로 둘 쪽 ' + (plan.counts.keep + plan.counts.none) + (plan.counts.error ? ', 오류 ' + plan.counts.error : '') + '. 현재 ' + state.page + '쪽' + (cat ? '' : ''));
+    cv.setAttribute('aria-label', '쪽별 적용 규칙: 전체 ' + n + '쪽 중 자를 쪽 ' + plan.counts.crop + ', 그대로 둘 쪽 ' + (plan.counts.keep + plan.counts.none) + (plan.counts.error ? ', 오류 ' + plan.counts.error : '') + (plan.counts['delete'] ? ', 삭제할 쪽 ' + plan.counts['delete'] : '') + '. 현재 ' + state.page + '쪽' + (cat ? '' : ''));
   }
 
   function renderLegend() {
@@ -1284,8 +1408,8 @@
     var plan = state.plan;
     if (!plan || !plan.pages.length) return;
     var cat = currentCat();
-    function item(colorVar, light, title, pages, extra) {
-      var sw = h('span', { class: 'sw' + (light ? ' light' : '') });
+    function item(colorVar, kind, title, pages, extra) {
+      var sw = h('span', { class: 'sw' + (kind ? ' ' + kind : '') });
       sw.style.setProperty('--sc', colorVar);
       ul.appendChild(h('li', {}, [h('button', { type: 'button', 'data-page': pages[0] }, [
         sw,
@@ -1293,15 +1417,17 @@
       ])]));
     }
     cat.rules.forEach(function (rule, idx) {
-      var pages = plan.pages.filter(function (p) { return p.rule === idx && p.status !== 'error'; });
+      var pages = plan.pages.filter(function (p) { return p.rule === idx && p.status !== 'error' && p.status !== 'delete'; });
       if (!pages.length) return;
       var allKeep = pages.every(function (p) { return p.status === 'keep'; });
-      item(ruleColor(idx), allKeep, '규칙 ' + (idx + 1) + (rule.label ? ' · ' + rule.label : ''), pages.map(function (p) { return p.page; }), allKeep ? ' · 자르지 않음' : '');
+      item(ruleColor(idx), allKeep ? 'light' : '', '규칙 ' + (idx + 1) + (rule.label ? ' · ' + rule.label : ''), pages.map(function (p) { return p.page; }), allKeep ? ' · 자르지 않음' : '');
     });
     var none = plan.pages.filter(function (p) { return p.status === 'none'; }).map(function (p) { return p.page; });
-    if (none.length) item('var(--none)', false, '규칙 없음', none, ' · 자르지 않음');
+    if (none.length) item('var(--none)', '', '규칙 없음', none, ' · 자르지 않음');
     var errs = plan.pages.filter(function (p) { return p.status === 'error'; });
-    if (errs.length) item('var(--bad)', false, '오류', errs.map(function (p) { return p.page; }), ' · 자르지 않음');
+    if (errs.length) item('var(--bad)', '', '오류', errs.map(function (p) { return p.page; }), ' · 자르지 않음');
+    var dels = plan.pages.filter(function (p) { return p.status === 'delete'; });
+    if (dels.length) item('var(--bad)', 'del', '삭제', dels.map(function (p) { return p.page; }), ' · 결과에서 빠짐');
   }
 
   /* ---------- 실행 ---------- */
@@ -1313,18 +1439,27 @@
     if (loading) return { ok: false, hint: 'PDF를 여는 중입니다…' };
     if (!ready.length) return { ok: false, hint: '자를 수 있는 PDF가 없습니다.', err: true };
     var cat = currentCat();
-    if (!cat.rules.length) return { ok: false, hint: '규칙을 하나 이상 추가해 주세요.', err: true };
+    var hasDel = !!C.normalizeSpec(cat.deletePages || '');
+    if (!cat.rules.length && !hasDel) return { ok: false, hint: '규칙을 하나 이상 추가해 주세요.', err: true };
     var probs = C.ruleProblems(cat.rules);
     if (probs.length) return { ok: false, hint: '규칙 ' + (probs[0].rule + 1) + ': ' + probs[0].error, err: true };
-    var crop = 0, errPages = 0;
+    var delErr = C.deleteProblem(cat.deletePages || '');
+    if (delErr) return { ok: false, hint: '삭제할 쪽: ' + delErr, err: true };
+    var crop = 0, errPages = 0, delPages = 0, whole = 0;
     ready.forEach(function (f) {
-      var p = C.planDocument(cat.rules, f.geoms);
+      var p = planFor(f.geoms);
       crop += p.counts.crop;
       errPages += p.counts.error;
+      delPages += p.counts['delete'];
+      if (p.counts['delete'] >= p.total) whole++;
     });
-    if (!crop) return { ok: false, hint: '이 규칙으로는 자를 페이지가 없습니다. 페이지 지정과 여백 값을 확인해 주세요.', err: true };
-    var hint = '“' + cat.name + '” 규칙으로 파일 ' + ready.length + '개, 모두 ' + crop + '쪽을 자릅니다.';
+    if (whole === ready.length) return { ok: false, hint: '모든 쪽이 삭제되도록 지정되어 있어 결과 파일을 만들 수 없습니다. 적어도 한 쪽은 남겨 주세요.', err: true };
+    if (!crop && !delPages) return { ok: false, hint: hasDel ? '이 규칙으로는 자르거나 삭제할 쪽이 없습니다. 페이지 지정과 여백 값을 확인해 주세요.' : '이 규칙으로는 자를 페이지가 없습니다. 페이지 지정과 여백 값을 확인해 주세요.', err: true };
+    var hint = '“' + cat.name + '” 규칙으로 파일 ' + ready.length + '개' + (crop
+      ? ', 모두 ' + crop + '쪽을 자' + (delPages ? '르고 ' + delPages + '쪽을 삭제합니다.' : '릅니다.')
+      : '에서 모두 ' + delPages + '쪽을 삭제합니다.');
     if (errPages) hint += ' 여백이 페이지보다 큰 ' + errPages + '쪽은 자르지 않습니다.';
+    if (whole) hint += ' 모든 쪽이 삭제되는 파일 ' + whole + '개는 만들지 않습니다.';
     return { ok: true, hint: hint };
   }
 
@@ -1347,6 +1482,7 @@
     btn.textContent = '자르는 중…';
     var cat = currentCat();
     var rules = clone(cat.rules);
+    var delSpec = cat.deletePages || '';
     var sig = rulesSig();
     var ready = state.files.filter(function (f) { return f.status === 'ready'; });
     var items = [];
@@ -1359,10 +1495,10 @@
         hint.textContent = '자르는 중… (' + (i + 1) + '/' + ready.length + ') ' + f.name;
         await nextFrame();
         try {
-          var r = await C.cropPdf(lib, f.bytes, rules);
+          var r = await C.cropPdf(lib, f.bytes, rules, delSpec);
           items.push({ fileId: f.id, srcName: f.name, name: C.outputName(f.name), bytes: r.bytes, report: r.report, changed: r.changed });
         } catch (e) {
-          items.push({ fileId: f.id, srcName: f.name, name: C.outputName(f.name), error: '이 파일은 처리하지 못했습니다. (' + ((e && e.message) || e) + ')' });
+          items.push({ fileId: f.id, srcName: f.name, name: C.outputName(f.name), error: e && e.user ? e.user : '이 파일은 처리하지 못했습니다. (' + ((e && e.message) || e) + ')' });
         }
       }
     } catch (e) {
@@ -1383,7 +1519,9 @@
     renderDragHint();
     if (items.length && !items.some(function (it) { return it.error; })) {
       var saveLabel = IS_PWA && IS_IOS && SHARE_PDF ? '저장·공유' : '저장';
-      toast(items.length === 1 ? '다 잘랐습니다. “' + saveLabel + '”을 눌러 파일을 받으세요.' : items.length + '개 파일을 다 잘랐습니다. 하나씩 받거나 한 번에 받으세요.');
+      var anyCrop = items.some(function (it) { return it.report && it.report.cropped.length; });
+      var done = anyCrop ? '다 잘랐습니다' : '쪽을 삭제한 파일을 만들었습니다';
+      toast(items.length === 1 ? done + '. “' + saveLabel + '”을 눌러 파일을 받으세요.' : items.length + '개 ' + (anyCrop ? '파일을 다 잘랐습니다' : '파일을 다 만들었습니다') + '. 하나씩 받거나 한 번에 받으세요.');
     }
   }
 
@@ -1404,10 +1542,14 @@
       if (it.error) sum = h('span', { class: 'res-sum err', text: it.error });
       else {
         var rp = it.report;
-        var parts = [rp.total + '쪽 중 ' + rp.cropped.length + '쪽 자름'];
+        var dl = rp.deleted || [];
+        var head = rp.cropped.length || !dl.length ? rp.cropped.length + '쪽 자름' : '';
+        if (dl.length) head += (head ? ', ' : '') + dl.length + '쪽 삭제(' + C.compressPages(dl, 5) + '쪽)';
+        var parts = [rp.total + '쪽 중 ' + head];
         var same = rp.kept.length + rp.untouched.length;
         if (same) parts.push(same + '쪽 그대로');
         if (rp.errors.length) parts.push(rp.errors.length + '쪽은 여백이 커서 자르지 않음(' + C.compressPages(rp.errors.map(function (e) { return e.page; }), 5) + '쪽)');
+        if (dl.length) parts.push('결과 ' + (rp.total - dl.length) + '쪽');
         if (!it.changed) parts = ['자른 쪽이 없어 원본과 같습니다'];
         sum = h('span', { class: 'res-sum' + (rp.errors.length ? ' err' : ''), text: parts.join(' · ') + ' · ' + fmtBytes(it.bytes.length) });
       }
@@ -1522,8 +1664,9 @@
 
   function refresh() {
     var src = previewSource();
-    state.plan = src.geoms.length ? C.planDocument(currentCat().rules, src.geoms) : null;
+    state.plan = src.geoms.length ? planFor(src.geoms) : null;
     updateRuleStatus();
+    updateDelStatus();
     renderStrip();
     renderLegend();
     renderPageInfo();
@@ -1578,6 +1721,11 @@
     var list = $('#ruleList');
     list.addEventListener('click', onRuleListClick);
     list.addEventListener('input', onRuleInput);
+    $('#delPages').addEventListener('input', function (e) {
+      currentCat().deletePages = e.target.value;
+      refresh();
+      scheduleSave();
+    });
 
     var fi = $('#fileInput');
     fi.addEventListener('change', function () { addFiles(fi.files); fi.value = ''; });
@@ -1639,6 +1787,7 @@
     window.addEventListener('pointerup', onHandleUp);
     window.addEventListener('pointercancel', onHandleUp);
     $('#splitBtn').addEventListener('click', splitPage);
+    $('#delPageBtn').addEventListener('click', togglePageDeletion);
     $('#runBtn').addEventListener('click', runCrop);
     $('#results').addEventListener('click', onResultsClick);
     $('#exportBtn').addEventListener('click', exportSettings);

@@ -12,6 +12,7 @@
   var SIDES = ['top', 'bottom', 'left', 'right'];
   var MAX_RULES = 500;       // 한 카테고리의 규칙 수 (쪽마다 따로 정해도 넉넉하게)
   var MAX_CATEGORIES = 100;
+  var DEL_MAX = 2000;        // ‘삭제할 쪽’ 칸 글자 수 (쪽을 하나씩 눌러 넣어도 넉넉하게)
   var SIDE_LABEL = { top: '위', bottom: '아래', left: '왼쪽', right: '오른쪽' };
 
   var WORDS = {
@@ -87,6 +88,8 @@
       else if (t.type === 'odd') { for (var q = 1; q <= total; q += 2) add(q); }
       else if (t.type === 'even') { for (var r = 2; r <= total; r += 2) add(r); }
       else {
+        // “12-”(12쪽부터 끝까지)인데 파일이 10쪽이면 해당하는 쪽이 없다
+        if (t.to === 'last' && t.from !== 'last' && t.from > total) { beyond = true; continue; }
         var a = t.from === 'last' ? total : t.from;
         var b = t.to === 'last' ? total : t.to;
         if (a > b) { var tmp = a; a = b; b = tmp; }
@@ -253,13 +256,108 @@
     return { ok: true, box: box, kept: { w: keepW, h: keepH } };
   }
 
-  /** 파일 전체 계획: 페이지마다 어떤 규칙이 적용되고 결과가 어떻게 되는지 */
-  function planDocument(rules, geoms) {
+  /* ---------- 쪽 삭제 ---------- */
+
+  /** ‘삭제할 쪽’ 칸을 해석한다. 비어 있으면 아무 쪽도 삭제하지 않는다. */
+  function deletionPlan(spec, total) {
+    var none = { ok: true, empty: true, pages: [], beyond: false, set: {} };
+    if (!normalizeSpec(spec)) return none;
+    var parsed = parsePageSpec(spec);
+    if (!parsed.ok) return { ok: false, empty: false, error: parsed.error, pages: [], beyond: false, set: {} };
+    var ex = expandTerms(parsed.terms, total);
+    var set = {};
+    ex.pages.forEach(function (p) { set[p] = true; });
+    return { ok: true, empty: false, pages: ex.pages, beyond: ex.beyond, set: set };
+  }
+
+  /** ‘삭제할 쪽’ 칸의 오류 문구 (문제가 없거나 비어 있으면 null) */
+  function deleteProblem(spec) {
+    if (!normalizeSpec(spec)) return null;
+    var p = parsePageSpec(spec);
+    return p.ok ? null : p.error;
+  }
+
+  var WORD_TEXT = { all: '전체', odd: '홀수', even: '짝수' };
+
+  /**
+   * ‘삭제할 쪽’ 칸에 쪽 하나를 넣거나(add) 빼서(되살리기) 새 문자열을 만든다.
+   * 숫자와 범위는 합쳐서 다시 쓰고(예: 3, 5에 4를 넣으면 3-5), 범위 안의 쪽을 빼면 범위를 나눈다.
+   * 홀수·짝수로 지정된 쪽은 하나만 뺄 수 없으므로 이유를 돌려준다.
+   */
+  function editDeleteSpec(spec, page, total, add) {
+    var src = String(spec == null ? '' : spec);
+    var terms = [];
+    if (normalizeSpec(src)) {
+      var parsed = parsePageSpec(src);
+      if (!parsed.ok) return { ok: false, reason: 'invalid', error: parsed.error };
+      terms = parsed.terms;
+    }
+    var covered = expandTerms(terms, total).pages.indexOf(page) !== -1;
+    if (add === covered) return { ok: true, spec: src, changed: false };
+    var iv = [];   // 닫힌 범위 [처음, 끝]
+    var rest = []; // { kind: 'from', n } = n쪽부터 끝까지, { kind: 'last' }, { kind: 'all'|'odd'|'even' }
+    terms.forEach(function (t) {
+      if (t.type !== 'range') { rest.push({ kind: t.type }); return; }
+      if (t.from === 'last' && t.to === 'last') { rest.push({ kind: 'last' }); return; }
+      if (t.from === 'last' || t.to === 'last') { rest.push({ kind: 'from', n: t.from === 'last' ? t.to : t.from }); return; }
+      iv.push([Math.min(t.from, t.to), Math.max(t.from, t.to)]);
+    });
+    function covers(r, p) {
+      if (r.kind === 'all') return true;
+      if (r.kind === 'odd') return p % 2 === 1;
+      if (r.kind === 'even') return p % 2 === 0;
+      if (r.kind === 'last') return p === total;
+      return r.n <= p && p <= total;
+    }
+    if (add) iv.push([page, page]);
+    else {
+      for (var i = 0; i < rest.length; i++) {
+        if ((rest[i].kind === 'odd' || rest[i].kind === 'even') && covers(rest[i], page)) {
+          return { ok: false, reason: 'pattern', word: WORD_TEXT[rest[i].kind] };
+        }
+      }
+      var keepRest = [];
+      rest.forEach(function (r) {
+        if (!covers(r, page)) { keepRest.push(r); return; }
+        if (r.kind === 'last') return;
+        // n쪽부터 끝까지(또는 전체) → n ~ (page-1)쪽 + (page+1)쪽부터 끝까지. 마지막 쪽을 되살리면 뒤쪽은 남기지 않는다
+        var n = r.kind === 'all' ? 1 : r.n;
+        if (n <= page - 1) iv.push([n, page - 1]);
+        if (page < total) keepRest.push({ kind: 'from', n: page + 1 });
+      });
+      rest = keepRest;
+      var cut = [];
+      iv.forEach(function (r) {
+        if (page < r[0] || page > r[1]) { cut.push(r); return; }
+        if (r[0] <= page - 1) cut.push([r[0], page - 1]);
+        if (page + 1 <= r[1]) cut.push([page + 1, r[1]]);
+      });
+      iv = cut;
+    }
+    iv.sort(function (x, y) { return x[0] - y[0]; });
+    var merged = [];
+    iv.forEach(function (r) {
+      var last = merged[merged.length - 1];
+      if (last && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1]);
+      else merged.push([r[0], r[1]]);
+    });
+    var parts = merged.map(function (r) { return r[0] === r[1] ? String(r[0]) : r[0] + '-' + r[1]; });
+    rest.forEach(function (r) {
+      if (r.kind === 'from') parts.push(r.n + '-');
+      else if (r.kind === 'last') parts.push('마지막');
+      else parts.push(WORD_TEXT[r.kind]);
+    });
+    return { ok: true, spec: parts.join(', '), changed: true };
+  }
+
+  /** 파일 전체 계획: 페이지마다 어떤 규칙이 적용되고 결과가 어떻게 되는지 (삭제할 쪽은 규칙보다 앞선다) */
+  function planDocument(rules, geoms, delSpec) {
     var total = geoms.length;
     var asg = assignRules(rules, total);
     var margins = rules.map(ruleMargins);
+    var del = deletionPlan(delSpec, total);
     var pages = [];
-    var counts = { crop: 0, keep: 0, none: 0, error: 0 };
+    var counts = { crop: 0, keep: 0, none: 0, error: 0, 'delete': 0 };
     for (var p = 1; p <= total; p++) {
       var g = geoms[p - 1];
       var ri = asg.assign[p];
@@ -277,10 +375,16 @@
           }
         }
       }
+      if (del.set[p]) { item.deleted = true; item.status = 'delete'; }
       counts[item.status]++;
       pages.push(item);
     }
-    return { pages: pages, perRule: asg.perRule, margins: margins, counts: counts, total: total };
+    // 규칙별 쪽 목록에서는 삭제할 쪽을 빼고 따로 적어 둔다
+    asg.perRule.forEach(function (pr) {
+      pr.deleted = pr.pages.filter(function (p) { return del.set[p]; });
+      if (pr.deleted.length) pr.pages = pr.pages.filter(function (p) { return !del.set[p]; });
+    });
+    return { pages: pages, perRule: asg.perRule, margins: margins, counts: counts, total: total, del: del, remain: total - del.pages.length };
   }
 
   /** 규칙 목록 자체의 오류(페이지 표현, 여백 값) */
@@ -340,17 +444,295 @@
   }
 
   /**
-   * 규칙대로 자른 PDF를 만든다.
-   * 자를 페이지가 하나도 없으면 원본 바이트를 그대로 돌려준다.
+   * 쪽을 지운다. 쪽 목록에서 빼는 데 그치지 않고, 그 쪽을 가리키던 책갈피·링크·이름 붙은 위치·양식 칸 등을 정리한 뒤
+   * 더는 쓰이지 않는 객체(지운 쪽의 내용·그림·주석)를 파일에서 뺀다. 다른 쪽과 함께 쓰는 글꼴·그림은 남는다.
+   * pages: 지우기 전의 쪽 목록, delIdx: 지울 쪽 번호(0부터, 오름차순)
    */
-  async function cropPdf(PDFLib, bytes, rules) {
+  function removePages(PDFLib, doc, pages, delIdx) {
+    var L = PDFLib;
+    var ctx = doc.context;
+    var cat = doc.catalog;
+    var N = function (s) { return L.PDFName.of(s); };
+    var lk = function (o) { return o instanceof L.PDFRef ? ctx.lookup(o) : o; };
+    var isDict = function (o) { return o instanceof L.PDFDict; };
+    var isArr = function (o) { return o instanceof L.PDFArray; };
+    var delSet = {};
+    delIdx.forEach(function (i) { delSet[i] = true; });
+
+    // 지울 쪽 객체 (같은 객체가 남는 쪽에도 쓰이면 지우지 않는다)
+    var keptRefs = new Set();
+    pages.forEach(function (pg, i) { if (!delSet[i]) keptRefs.add(pg.ref); });
+    var gone = new Set();
+    pages.forEach(function (pg, i) { if (delSet[i] && !keptRefs.has(pg.ref)) gone.add(pg.ref); });
+    function annotsOf(pg) { var a = lk(pg.node.get(N('Annots'))); return isArr(a) ? a : null; }
+    var goneAnnots = new Set();
+    pages.forEach(function (pg) {
+      if (!gone.has(pg.ref)) return;
+      var a = annotsOf(pg);
+      if (a) a.asArray().forEach(function (r) { if (r instanceof L.PDFRef) goneAnnots.add(r); });
+    });
+    pages.forEach(function (pg) {
+      if (gone.has(pg.ref)) return;
+      var a = annotsOf(pg);
+      if (a) a.asArray().forEach(function (r) { goneAnnots.delete(r); });
+    });
+
+    // 쪽 목록에서 빼기 (뒤에서부터)
+    for (var k = delIdx.length - 1; k >= 0; k--) doc.removePage(delIdx[k]);
+
+    // 이름 붙은 위치(named destination) 모으기
+    function flatten(node, key, out, depth) {
+      node = lk(node);
+      if (!isDict(node) || depth > 40) return out;
+      var arr = lk(node.get(N(key)));
+      if (isArr(arr)) for (var i = 0; i + 1 < arr.size(); i += 2) out.push([arr.get(i), arr.get(i + 1)]);
+      var kids = lk(node.get(N('Kids')));
+      if (isArr(kids)) kids.asArray().forEach(function (kid) { flatten(kid, key, out, depth + 1); });
+      return out;
+    }
+    function keyOf(o) {
+      o = lk(o);
+      try {
+        if (o instanceof L.PDFName) return o.decodeText();
+        if (o instanceof L.PDFString || o instanceof L.PDFHexString) return o.decodeText();
+      } catch (e) { /* 읽을 수 없는 이름 */ }
+      return null;
+    }
+    var names = lk(cat.get(N('Names')));
+    var destTree = isDict(names) ? lk(names.get(N('Dests'))) : null;
+    var treeDests = isDict(destTree) ? flatten(destTree, 'Names', [], 0) : [];
+    var oldDests = lk(cat.get(N('Dests')));
+    var named = new Map();
+    treeDests.forEach(function (e) { var kk = keyOf(e[0]); if (kk !== null && !named.has(kk)) named.set(kk, e[1]); });
+    if (isDict(oldDests)) oldDests.entries().forEach(function (e) { var kk = keyOf(e[0]); if (kk !== null && !named.has(kk)) named.set(kk, e[1]); });
+
+    function destPage(d, depth) {
+      d = lk(d);
+      if (depth > 8 || !d) return null;
+      if (isArr(d)) { var first = d.size() ? d.get(0) : null; return first instanceof L.PDFRef ? first : null; }
+      if (isDict(d)) return destPage(d.get(N('D')), depth + 1);
+      var kk = keyOf(d);
+      return kk !== null && named.has(kk) ? destPage(named.get(kk), depth + 1) : null;
+    }
+    function actionPage(a) {
+      a = lk(a);
+      if (!isDict(a) || lk(a.get(N('S'))) !== N('GoTo')) return null;
+      return destPage(a.get(N('D')), 0);
+    }
+    function pointsToGone(dict) {
+      var d = dict.get(N('Dest'));
+      var t = d ? destPage(d, 0) : actionPage(dict.get(N('A')));
+      return !!(t && gone.has(t));
+    }
+
+    // 문서를 열 때 지운 쪽으로 가라는 설정
+    var oa = cat.get(N('OpenAction'));
+    if (oa) {
+      var oaPage = isArr(lk(oa)) ? destPage(oa, 0) : actionPage(oa);
+      if (oaPage && gone.has(oaPage)) cat.delete(N('OpenAction'));
+    }
+
+    // 책갈피: 지운 쪽을 가리키는 항목은 뺀다 (아래 항목이 남아 있으면 이동 없는 묶음으로 남긴다)
+    function pruneOutline(node, depth) {
+      var kids = [];
+      var seen = new Set();
+      var cur = node.get(N('First'));
+      while (cur instanceof L.PDFRef && !seen.has(cur) && kids.length < 100000) {
+        seen.add(cur);
+        var it = ctx.lookup(cur);
+        if (!isDict(it)) break;
+        kids.push({ ref: cur, item: it, sub: 0 });
+        cur = it.get(N('Next'));
+      }
+      var kept = [];
+      kids.forEach(function (kd) {
+        kd.sub = depth < 40 ? pruneOutline(kd.item, depth + 1) : 0;
+        var hasKids = kd.item.get(N('First')) instanceof L.PDFRef;
+        if (pointsToGone(kd.item)) {
+          if (!hasKids) return;
+          kd.item.delete(N('Dest'));
+          kd.item.delete(N('A'));
+        }
+        var c = lk(kd.item.get(N('Count')));
+        if (!hasKids) kd.item.delete(N('Count'));
+        else if (c instanceof L.PDFNumber && c.asNumber() !== 0) kd.item.set(N('Count'), ctx.obj(c.asNumber() > 0 ? kd.sub : -kd.sub));
+        kept.push(kd);
+      });
+      kept.forEach(function (kd, i) {
+        if (i > 0) kd.item.set(N('Prev'), kept[i - 1].ref); else kd.item.delete(N('Prev'));
+        if (i < kept.length - 1) kd.item.set(N('Next'), kept[i + 1].ref); else kd.item.delete(N('Next'));
+      });
+      if (kept.length) { node.set(N('First'), kept[0].ref); node.set(N('Last'), kept[kept.length - 1].ref); }
+      else { node.delete(N('First')); node.delete(N('Last')); }
+      var vis = 0;
+      kept.forEach(function (kd) {
+        var c = lk(kd.item.get(N('Count')));
+        vis += 1 + (c instanceof L.PDFNumber && c.asNumber() > 0 ? kd.sub : 0);
+      });
+      return vis;
+    }
+    var outlines = lk(cat.get(N('Outlines')));
+    if (isDict(outlines)) {
+      var vis = pruneOutline(outlines, 0);
+      if (outlines.get(N('First'))) outlines.set(N('Count'), ctx.obj(vis));
+      else cat.delete(N('Outlines'));
+    }
+
+    // 이름 붙은 위치: 지운 쪽을 가리키는 것은 뺀다
+    if (isDict(destTree)) {
+      var keepPairs = [];
+      treeDests.forEach(function (e) {
+        var t = destPage(e[1], 0);
+        if (!(t && gone.has(t))) keepPairs.push(e[0], e[1]);
+      });
+      if (keepPairs.length) {
+        var flat = ctx.obj({});
+        flat.set(N('Names'), ctx.obj(keepPairs));
+        names.set(N('Dests'), ctx.register(flat));
+      } else names.delete(N('Dests'));
+    }
+    if (isDict(oldDests)) {
+      oldDests.entries().forEach(function (e) {
+        var t = destPage(e[1], 0);
+        if (t && gone.has(t)) oldDests.delete(e[0]);
+      });
+    }
+
+    // 남는 쪽의 링크 중 지운 쪽으로 가는 것은 뺀다
+    pages.forEach(function (pg, i) {
+      if (delSet[i]) return;
+      var a = annotsOf(pg);
+      if (!a) return;
+      for (var j = a.size() - 1; j >= 0; j--) {
+        var ar = a.get(j);
+        var an = lk(ar);
+        if (goneAnnots.has(ar)) { a.remove(j); continue; }
+        if (isDict(an) && lk(an.get(N('Subtype'))) === N('Link') && pointsToGone(an)) a.remove(j);
+      }
+    });
+
+    // 양식: 지운 쪽에만 있던 칸은 뺀다 (값이 남지 않게)
+    var acro = lk(cat.get(N('AcroForm')));
+    if (isDict(acro)) {
+      var removedFields = new Set();
+      var keepField = function (ref, depth) {
+        var f = lk(ref);
+        if (!isDict(f) || depth > 40) return true;
+        var kids = lk(f.get(N('Kids')));
+        if (isArr(kids) && kids.size()) {
+          for (var j = kids.size() - 1; j >= 0; j--) {
+            var kr = kids.get(j);
+            if (!keepField(kr, depth + 1)) { kids.remove(j); removedFields.add(kr); }
+          }
+          return kids.size() > 0;
+        }
+        if (ref instanceof L.PDFRef && goneAnnots.has(ref)) return false;
+        var p = f.get(N('P'));
+        return !(lk(f.get(N('Subtype'))) === N('Widget') && p instanceof L.PDFRef && gone.has(p));
+      };
+      var fields = lk(acro.get(N('Fields')));
+      if (isArr(fields)) {
+        for (var fi = fields.size() - 1; fi >= 0; fi--) {
+          var fr = fields.get(fi);
+          if (!keepField(fr, 0)) { fields.remove(fi); removedFields.add(fr); }
+        }
+      }
+      acro.delete(N('XFA'));
+      var co = lk(acro.get(N('CO')));
+      if (isArr(co)) for (var ci = co.size() - 1; ci >= 0; ci--) if (removedFields.has(co.get(ci)) || goneAnnots.has(co.get(ci))) co.remove(ci);
+    }
+
+    // 태그(접근성 구조)·기사 흐름은 쪽마다 얽혀 있어 정리하지 않고 뺀다 (보이는 내용에는 영향 없음)
+    if (cat.get(N('StructTreeRoot'))) { cat.delete(N('StructTreeRoot')); cat.delete(N('MarkInfo')); }
+    if (cat.get(N('Threads'))) {
+      cat.delete(N('Threads'));
+      pages.forEach(function (pg, i) { if (!delSet[i]) pg.node.delete(N('B')); });
+    }
+
+    // 쪽 번호 표시(PageLabels): 남는 쪽이 원래 번호를 그대로 보이도록 다시 만든다
+    var pl = lk(cat.get(N('PageLabels')));
+    if (isDict(pl)) {
+      try {
+        var nums = flatten(pl, 'Nums', [], 0).map(function (e) { return [lk(e[0]), lk(e[1])]; })
+          .filter(function (e) { return e[0] instanceof L.PDFNumber && isDict(e[1]); })
+          .map(function (e) { return [e[0].asNumber(), e[1]]; })
+          .sort(function (x, y) { return x[0] - y[0]; });
+        if (!nums.length || nums[0][0] !== 0) throw new Error('labels');
+        var outNums = [];
+        var prev = null;
+        var ni = 0;
+        pages.forEach(function (pg, orig) {
+          if (delSet[orig]) return;
+          var r = null;
+          for (var q = nums.length - 1; q >= 0; q--) if (nums[q][0] <= orig) { r = nums[q]; break; }
+          var d = r[1];
+          var st = lk(d.get(N('St')));
+          var number = (st instanceof L.PDFNumber ? st.asNumber() : 1) + (orig - r[0]);
+          var styled = !!d.get(N('S'));
+          if (!(prev && prev.r === r && (!styled || number === prev.number + 1))) {
+            var nd = ctx.obj({});
+            if (d.get(N('S'))) nd.set(N('S'), d.get(N('S')));
+            if (d.get(N('P'))) nd.set(N('P'), d.get(N('P')));
+            if (styled && number !== 1) nd.set(N('St'), ctx.obj(number));
+            outNums.push(ctx.obj(ni), nd);
+          }
+          prev = { r: r, number: number };
+          ni++;
+        });
+        var npl = ctx.obj({});
+        npl.set(N('Nums'), ctx.obj(outNums));
+        cat.set(N('PageLabels'), ctx.register(npl));
+      } catch (e) {
+        cat.delete(N('PageLabels'));
+      }
+    }
+
+    // 남은 연결 중 지운 쪽·지운 주석을 가리키는 것은 끊고, 어디에서도 쓰이지 않는 객체는 파일에서 뺀다
+    var isGone = function (v) { return v instanceof L.PDFRef && (gone.has(v) || goneAnnots.has(v)); };
+    var reach = new Set();
+    var work = [];
+    var mark = function (v) {
+      if (v instanceof L.PDFRef) {
+        if (reach.has(v)) return;
+        reach.add(v);
+        var o = ctx.lookup(v);
+        if (o) work.push(o);
+      } else if (v instanceof L.PDFDict || v instanceof L.PDFArray || v instanceof L.PDFStream) work.push(v);
+    };
+    var tr = ctx.trailerInfo || {};
+    [tr.Root, tr.Info, tr.Encrypt].forEach(function (v) { if (v) mark(v); });
+    while (work.length) {
+      var o = work.pop();
+      if (o instanceof L.PDFStream) o = o.dict;
+      if (isDict(o)) {
+        o.entries().forEach(function (e) {
+          if (isGone(e[1])) o.delete(e[0]);
+          else mark(e[1]);
+        });
+      } else if (isArr(o)) {
+        for (var j = o.size() - 1; j >= 0; j--) {
+          var v = o.get(j);
+          if (isGone(v)) { if (goneAnnots.has(v)) o.remove(j); else o.set(j, L.PDFNull); }
+          else mark(v);
+        }
+      }
+    }
+    ctx.enumerateIndirectObjects().forEach(function (pair) { if (!reach.has(pair[0])) ctx.delete(pair[0]); });
+  }
+
+  /**
+   * 규칙대로 자르고 ‘삭제할 쪽’을 뺀 PDF를 만든다.
+   * 자르거나 삭제할 쪽이 하나도 없으면 원본 바이트를 그대로 돌려준다.
+   */
+  async function cropPdf(PDFLib, bytes, rules, delSpec) {
     var doc = await loadDoc(PDFLib, bytes);
     var pages = doc.getPages();
     var geoms = pages.map(function (page) { return readGeometry(PDFLib, page); });
-    var plan = planDocument(rules, geoms);
-    var report = { total: pages.length, cropped: [], kept: [], untouched: [], errors: [] };
+    var plan = planDocument(rules, geoms, delSpec);
+    var report = { total: pages.length, cropped: [], kept: [], untouched: [], errors: [], deleted: [] };
     plan.pages.forEach(function (item) {
-      if (item.status === 'crop') {
+      if (item.status === 'delete') report.deleted.push(item.page);
+      else if (item.status === 'crop') {
         var c = computeCrop(geoms[item.page - 1], item.cm);
         applyBox(PDFLib, pages[item.page - 1], c.box);
         report.cropped.push(item.page);
@@ -358,7 +740,14 @@
       else if (item.status === 'none') report.untouched.push(item.page);
       else report.errors.push({ page: item.page, rule: item.rule, error: item.error });
     });
-    if (!report.cropped.length) return { bytes: bytes, report: report, changed: false };
+    if (plan.del && !plan.del.ok) {
+      var bad = new Error('delete spec'); bad.user = '‘삭제할 쪽’ 칸을 고쳐 주세요: ' + plan.del.error; throw bad;
+    }
+    if (report.deleted.length >= pages.length) {
+      var all = new Error('all pages deleted'); all.user = '모든 쪽이 삭제되도록 지정되어 있어 결과 파일을 만들 수 없습니다. 적어도 한 쪽은 남겨 주세요.'; throw all;
+    }
+    if (!report.cropped.length && !report.deleted.length) return { bytes: bytes, report: report, changed: false };
+    if (report.deleted.length) removePages(PDFLib, doc, pages, report.deleted.map(function (p) { return p - 1; }));
     try { doc.setModificationDate(new Date()); } catch (e) { /* 무시 */ }
     var out = await doc.save();
     return { bytes: out, report: report, changed: true };
@@ -421,6 +810,7 @@
       cats.push({
         id: id,
         name: cleanStr(c.name, 60) || '이름 없는 카테고리',
+        deletePages: cleanStr(c.deletePages, DEL_MAX),
         rules: rules.filter(function (r) { return r && typeof r === 'object'; }).map(function (r) {
           var rid = typeof r.id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(r.id) && !rseen[r.id] ? r.id : uid('r');
           rseen[rid] = true;
@@ -533,6 +923,7 @@
     PT_PER_CM: PT_PER_CM,
     MAX_RULES: MAX_RULES,
     MAX_CATEGORIES: MAX_CATEGORIES,
+    DEL_MAX: DEL_MAX,
     SIDES: SIDES,
     SIDE_LABEL: SIDE_LABEL,
     normalizeSpec: normalizeSpec,
@@ -546,6 +937,10 @@
     visualSizePt: visualSizePt,
     visualToBox: visualToBox,
     computeCrop: computeCrop,
+    deletionPlan: deletionPlan,
+    deleteProblem: deleteProblem,
+    editDeleteSpec: editDeleteSpec,
+    removePages: removePages,
     planDocument: planDocument,
     ruleProblems: ruleProblems,
     looksLikePdf: looksLikePdf,
