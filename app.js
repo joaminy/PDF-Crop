@@ -1698,16 +1698,43 @@
 
   function setupPwa() {
     if (!IS_PWA) return;
+    var buildMeta = document.querySelector('meta[name="app-build"]');
+    var build = buildMeta ? buildMeta.getAttribute('content') : '';
+    var verText = build ? ' · 버전 ' + build : '';
     if ('serviceWorker' in navigator) {
-      setAppStatus('오프라인용 파일을 받는 중…');
-      navigator.serviceWorker.register('sw.js').then(function () {
+      var hadController = !!navigator.serviceWorker.controller;
+      var reloading = false;
+      setAppStatus(hadController ? '인터넷 없이도 작동합니다' + verText : '오프라인용 파일을 받는 중…' + verText);
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        // 열 때마다 새 버전이 있는지 확인한다 (인터넷이 없으면 조용히 넘어감)
+        reg.update().catch(function () { /* 오프라인 */ });
+        reg.addEventListener('updatefound', function () {
+          if (!navigator.serviceWorker.controller) return;
+          setAppStatus('새 버전을 받는 중…' + verText);
+          var w = reg.installing;
+          // 받기에 실패하면(서버에 아직 옛 파일 등) 지금 버전을 그대로 쓰고 다음에 열 때 다시 시도한다
+          if (w) w.addEventListener('statechange', function () {
+            if (w.state === 'redundant' && !reloading) setAppStatus('인터넷 없이도 작동합니다' + verText);
+          });
+        });
         return navigator.serviceWorker.ready;
       }).then(function () {
-        setAppStatus('인터넷 없이도 작동합니다');
+        if (!reloading) setAppStatus('인터넷 없이도 작동합니다' + verText);
       }).catch(function () {
-        setAppStatus('이 주소에서는 오프라인 사용을 준비할 수 없습니다');
+        setAppStatus('이 주소에서는 오프라인 사용을 준비할 수 없습니다' + verText);
       });
-    } else setAppStatus('이 브라우저는 오프라인 사용을 지원하지 않습니다');
+      // 새 버전이 자리를 잡으면: 작업 중이 아니면 바로 다시 열고, 작업 중이면 단추로 묻는다
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!hadController || reloading) return;
+        if (!state.files.length && !state.running) {
+          reloading = true;
+          location.reload();
+        } else {
+          setAppStatus('새 버전이 준비되었습니다' + verText);
+          toast('새 버전이 준비되었습니다. 넣은 PDF는 다시 넣어야 합니다.', { label: '지금 적용', run: function () { reloading = true; location.reload(); } });
+        }
+      });
+    } else setAppStatus('이 브라우저는 오프라인 사용을 지원하지 않습니다' + verText);
 
     var bar = $('#installBar');
     if (!bar) return;
