@@ -1,13 +1,13 @@
 /* PDF 여백 자르기 — 오프라인용 서비스 워커.
    앱 파일을 기기에 보관해 인터넷 없이도 열리게 한다. 다른 주소로는 어떤 요청도 보내지 않는다. */
 'use strict';
-const VERSION = '36f41116f5b4';
+const VERSION = '16203feabd1e';
 const CACHE = 'pdfcrop-app-' + VERSION;
 const SHARE_CACHE = 'pdfcrop-share';
 const FILES = [
 [
 "./",
-"937e5157f2a850c7"
+"636156182493b975"
 ],
 [
 "./app.css",
@@ -43,7 +43,7 @@ const FILES = [
 ],
 [
 "./index.html",
-"937e5157f2a850c7"
+"636156182493b975"
 ],
 [
 "./manifest.webmanifest",
@@ -806,6 +806,7 @@ const FILES = [
 "0f998419819da449"
 ]
 ];
+const HASH = new Map(FILES.map(([p, h]) => [new URL(p, self.location.href).pathname, h]));
 
 async function sha16(buf) {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
@@ -825,6 +826,9 @@ self.addEventListener('install', (event) => {
     async function worker() {
       while (next < FILES.length) {
         const [path, hash] = FILES[next++];
+        // 이미 이 버전 보관함에 맞는 내용이 있으면 건너뛴다 (지난번에 받다 끊긴 경우 이어 받기)
+        const have = await cache.match(path);
+        if (have && await sha16(await have.arrayBuffer()) === hash) continue;
         let reused = false;
         for (const oc of olds) {
           const r = await oc.match(path);
@@ -848,6 +852,26 @@ self.addEventListener('install', (event) => {
     await self.skipWaiting();
   })());
 });
+
+// 보관함이 비었을 때(같은 주소 joaminy.github.io의 다른 앱이 지웠거나 기기가 정리한 경우),
+// 인터넷이 되면 이 버전의 파일로 다시 채운다. 내용(해시)이 맞는 파일만 넣는다.
+let healing = null;
+function heal() {
+  if (!healing) {
+    healing = (async () => {
+      const cache = await caches.open(CACHE);
+      for (const [path, hash] of FILES) {
+        if (await cache.match(path)) continue;
+        let res;
+        try { res = await fetch(new Request(path, { cache: 'reload' })); } catch (e) { return; } // 인터넷이 끊기면 다음에
+        if (!res.ok) continue;
+        const buf = await res.arrayBuffer();
+        if (await sha16(buf) === hash) await cache.put(path, new Response(buf, { headers: res.headers }));
+      }
+    })().catch(() => {}).finally(() => { healing = null; });
+  }
+  return healing;
+}
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
@@ -875,7 +899,11 @@ self.addEventListener('fetch', (event) => {
       if (page) return page;
     }
     try {
-      return await fetch(req);
+      const res = await fetch(req);
+      if (res.ok && HASH.has(url.pathname)) {
+        try { event.waitUntil(heal()); } catch (e) { heal(); }
+      }
+      return res;
     } catch (e) {
       return new Response('오프라인 상태입니다.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
