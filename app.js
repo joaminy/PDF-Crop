@@ -920,6 +920,25 @@
     return src.kind === 'file' && state.previewMode === 'result' && !!viewableResult(src.file);
   }
 
+  var MIN_KEEP_CM = 0.5;
+  function zeroCm() { return { top: 0, bottom: 0, left: 0, right: 0 }; }
+  /** 오류인 쪽은 페이지 안에 들어오도록 줄인 여백을 보여 준다(끌기 시작점으로도 씀) */
+  function clampCm(cm, orig) {
+    var P = C.PT_PER_CM, W = orig.w / P, H = orig.h / P;
+    var o = { top: cm.top, bottom: cm.bottom, left: cm.left, right: cm.right };
+    if (o.left + o.right > W - MIN_KEEP_CM) { var f = Math.max(0, W - MIN_KEEP_CM) / (o.left + o.right); o.left *= f; o.right *= f; }
+    if (o.top + o.bottom > H - MIN_KEEP_CM) { var g = Math.max(0, H - MIN_KEEP_CM) / (o.top + o.bottom); o.top *= g; o.bottom *= g; }
+    // 0.1 cm 단위로 내림해 반올림 때문에 남는 영역이 0.5 cm보다 작아지지 않게
+    C.SIDES.forEach(function (k) { o[k] = Math.floor(o[k] * 10 + 1e-6) / 10; });
+    return o;
+  }
+  function frameMargins(item) {
+    if (!item) return zeroCm();
+    if (item.status === 'crop' || item.status === 'keep') return item.cm;
+    if (item.status === 'error' && item.cm) return clampCm(item.cm, item.orig);
+    return zeroCm();
+  }
+
   function applyOverlay(extraNote) {
     var ov = $('#ov');
     var badge = $('#badge');
@@ -935,21 +954,22 @@
     if (!item) { ov.hidden = true; badge.textContent = extraNote || ''; return; }
     var rule = item.rule >= 0 ? cat.rules[item.rule] : null;
     var rname = rule ? '규칙 ' + (item.rule + 1) + (rule.label ? ' · ' + rule.label : '') : '';
-    if (item.status !== 'crop') {
-      ov.hidden = true;
-      if (item.status === 'none') badge.textContent = '해당 규칙 없음 · 자르지 않음';
-      else if (item.status === 'keep') badge.textContent = rname + ' · 자르지 않음';
-      else { badge.textContent = rname + ' · ' + item.error; badge.className = 'badge err'; }
-      if (extraNote) badge.textContent += ' · ' + extraNote;
-      return;
-    }
-    badge.textContent = extraNote || '';
+    var cm = frameMargins(item);
+    var text = '';
+    if (drag && drag.started) text = '위 ' + C.fmt(cm.top) + ' · 아래 ' + C.fmt(cm.bottom) + ' · 왼쪽 ' + C.fmt(cm.left) + ' · 오른쪽 ' + C.fmt(cm.right) + ' cm';
+    else if (item.status === 'none') text = '해당 규칙 없음 · 자르지 않음';
+    else if (item.status === 'keep') text = rname + ' · 자르지 않음';
+    else if (item.status === 'error') { text = rname + ' · ' + item.error; badge.className = 'badge err'; }
+    if (extraNote) text = text ? text + ' · ' + extraNote : extraNote;
+    badge.textContent = text;
+
+    // 점선 테두리(남길 영역)는 언제나 보여 주고 끌 수 있게 한다
     ov.hidden = false;
-    ov.style.setProperty('--rc', ruleColor(item.rule));
+    ov.style.setProperty('--rc', item.status === 'error' ? 'var(--bad)' : item.rule >= 0 ? ruleColor(item.rule) : 'var(--muted)');
     var P = C.PT_PER_CM;
     var W = item.orig.w, Hh = item.orig.h;
-    var t = item.cm.top * P / Hh * 100, b = item.cm.bottom * P / Hh * 100;
-    var l = item.cm.left * P / W * 100, r = item.cm.right * P / W * 100;
+    var t = cm.top * P / Hh * 100, b = cm.bottom * P / Hh * 100;
+    var l = cm.left * P / W * 100, r = cm.right * P / W * 100;
     var sheet = $('#sheet');
     var sw = sheet.clientWidth, sh = sheet.clientHeight;
     function band(sel, styles, cmVal, sizePx, horizontal) {
@@ -960,18 +980,210 @@
       span.style.display = cmVal > 0 && sizePx >= (horizontal ? 18 : 44) ? '' : 'none';
       el.style.display = cmVal > 0 ? '' : 'none';
     }
-    band('.b-top', { height: t + '%' }, item.cm.top, sh * t / 100, true);
-    band('.b-bottom', { height: b + '%' }, item.cm.bottom, sh * b / 100, true);
-    band('.b-left', { top: t + '%', bottom: b + '%', width: l + '%' }, item.cm.left, sw * l / 100, false);
-    band('.b-right', { top: t + '%', bottom: b + '%', width: r + '%' }, item.cm.right, sw * r / 100, false);
+    band('.b-top', { height: t + '%' }, cm.top, sh * t / 100, true);
+    band('.b-bottom', { height: b + '%' }, cm.bottom, sh * b / 100, true);
+    band('.b-left', { top: t + '%', bottom: b + '%', width: l + '%' }, cm.left, sw * l / 100, false);
+    band('.b-right', { top: t + '%', bottom: b + '%', width: r + '%' }, cm.right, sw * r / 100, false);
     var keep = ov.querySelector('.keep');
     keep.style.top = t + '%'; keep.style.bottom = b + '%'; keep.style.left = l + '%'; keep.style.right = r + '%';
     // 빗금은 한 장으로 그리고 남길 영역만 뚫는다 (띠마다 무늬가 어긋나지 않게)
-    var R = 100 - r, B = 100 - b;
-    var poly = 'polygon(0% 0%, 0% 100%, ' + l + '% 100%, ' + l + '% ' + t + '%, ' + R + '% ' + t + '%, ' + R + '% ' + B + '%, ' + l + '% ' + B + '%, ' + l + '% 100%, 100% 100%, 100% 0%)';
     var shade = ov.querySelector('.shade');
-    shade.style.webkitClipPath = poly;
-    shade.style.clipPath = poly;
+    var any = cm.top > 0 || cm.bottom > 0 || cm.left > 0 || cm.right > 0;
+    shade.style.display = any ? '' : 'none';
+    if (any) {
+      var R = 100 - r, B = 100 - b;
+      var poly = 'polygon(0% 0%, 0% 100%, ' + l + '% 100%, ' + l + '% ' + t + '%, ' + R + '% ' + t + '%, ' + R + '% ' + B + '%, ' + l + '% ' + B + '%, ' + l + '% 100%, 100% 100%, 100% 0%)';
+      shade.style.webkitClipPath = poly;
+      shade.style.clipPath = poly;
+    }
+  }
+
+  /* ---------- 끌어서 여백 정하기 ---------- */
+
+  var drag = null;
+  var dragRaf = 0;
+
+  function ruleIn(cat, id) {
+    for (var i = 0; i < cat.rules.length; i++) if (cat.rules[i].id === id) return cat.rules[i];
+    return null;
+  }
+  function catById(id) {
+    var cats = state.settings.categories;
+    for (var i = 0; i < cats.length; i++) if (cats[i].id === id) return cats[i];
+    return null;
+  }
+  /** 규칙 목록을 다시 그려도 미리보기가 손가락 아래에서 밀리지 않게 스크롤을 맞춘다 (좁은 화면은 규칙이 미리보기 위에 있음) */
+  function renderRulesKeepStage() {
+    var stage = $('#stage');
+    var before = stage.getBoundingClientRect().top;
+    renderRules();
+    var after = stage.getBoundingClientRect().top;
+    if (Math.abs(after - before) > 0.5) window.scrollBy(0, after - before);
+  }
+  function syncRuleInputs(ruleId) {
+    var rule = ruleId ? ruleIn(currentCat(), ruleId) : null;
+    if (!rule) return;
+    C.SIDES.forEach(function (k) {
+      var inp = document.getElementById('rule-' + ruleId + '-' + k);
+      if (inp && document.activeElement !== inp) inp.value = rule[k];
+    });
+  }
+
+  function onHandleDown(e) {
+    var hEl = e.target.closest('.h');
+    if (!hEl || drag || showingResult()) return;
+    var item = state.plan && state.plan.pages[state.page - 1];
+    if (!item) return;
+    e.preventDefault();
+    var sheet = $('#sheet');
+    var fm = frameMargins(item);
+    drag = {
+      edge: hEl.getAttribute('data-edge'), id: e.pointerId, x0: e.clientX, y0: e.clientY,
+      sw: sheet.clientWidth, sh: sheet.clientHeight,
+      W: item.orig.w / C.PT_PER_CM, H: item.orig.h / C.PT_PER_CM,
+      start: { top: fm.top, bottom: fm.bottom, left: fm.left, right: fm.right },
+      started: false, ruleId: null, catId: null, created: false, before: null, page: state.page
+    };
+    try { hEl.setPointerCapture(e.pointerId); } catch (x) { /* 무시 */ }
+  }
+
+  function beginDrag() {
+    var item = state.plan.pages[state.page - 1];
+    var cat = currentCat();
+    var pr = item.rule >= 0 ? state.plan.perRule[item.rule] : null;
+    var sharedError = item.status === 'error' && pr && pr.pages.length > 1;
+    var rule;
+    if (item.rule >= 0 && !sharedError) rule = cat.rules[item.rule];
+    else {
+      // 규칙이 없는 쪽, 또는 여러 쪽이 쓰는 규칙이 이 쪽에만 맞지 않는 경우: 이 쪽만의 규칙을 새로 만든다
+      if (cat.rules.length >= C.MAX_RULES) { toast('한 카테고리에는 규칙을 ' + C.MAX_RULES + '개까지 만들 수 있습니다.'); drag = null; return; }
+      rule = newRule(String(state.page));
+      rule.label = state.page + '쪽';
+      C.SIDES.forEach(function (k) { rule[k] = C.fmt(drag.start[k]); });
+      cat.rules.push(rule);
+      drag.created = true;
+      renderRulesKeepStage();
+    }
+    drag.ruleId = rule.id;
+    drag.catId = cat.id;
+    drag.clampAll = item.status === 'error' && !drag.created;
+    drag.before = { top: rule.top, bottom: rule.bottom, left: rule.left, right: rule.right };
+    drag.started = true;
+    $('#sheet').classList.add('dragging');
+  }
+
+  function onHandleMove(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    var dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+    if (!drag.started) {
+      if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+      beginDrag();
+      if (!drag) return;
+    }
+    e.preventDefault();
+    var cx = dx / drag.sw * drag.W, cy = dy / drag.sh * drag.H;
+    var s = drag.start, ed = drag.edge;
+    var n = { top: s.top, bottom: s.bottom, left: s.left, right: s.right };
+    if (ed.indexOf('t') !== -1) n.top = s.top + cy;
+    if (ed.indexOf('b') !== -1) n.bottom = s.bottom - cy;
+    if (ed.indexOf('l') !== -1) n.left = s.left + cx;
+    if (ed.indexOf('r') !== -1) n.right = s.right - cx;
+    // 0 cm 이상, 0.1 cm 단위, 남는 영역은 0.5 cm 이상
+    var r1 = function (v) { return Math.max(0, Math.round(v * 10) / 10); };
+    var floor1 = function (v) { return Math.max(0, Math.floor(v * 10 + 1e-6) / 10); };
+    C.SIDES.forEach(function (k) { n[k] = r1(n[k]); });
+    if (ed.indexOf('t') !== -1) n.top = Math.min(n.top, floor1(drag.H - n.bottom - MIN_KEEP_CM));
+    if (ed.indexOf('b') !== -1) n.bottom = Math.min(n.bottom, floor1(drag.H - n.top - MIN_KEEP_CM));
+    if (ed.indexOf('l') !== -1) n.left = Math.min(n.left, floor1(drag.W - n.right - MIN_KEEP_CM));
+    if (ed.indexOf('r') !== -1) n.right = Math.min(n.right, floor1(drag.W - n.left - MIN_KEEP_CM));
+    var rule = ruleIn(currentCat(), drag.ruleId);
+    if (!rule) return;
+    var touched = { t: 'top', b: 'bottom', l: 'left', r: 'right' };
+    Object.keys(touched).forEach(function (c) { if (ed.indexOf(c) !== -1) rule[touched[c]] = C.fmt(n[touched[c]]); });
+    if (drag.clampAll) C.SIDES.forEach(function (k) { rule[k] = C.fmt(n[k]); });
+    if (!dragRaf) {
+      dragRaf = requestAnimationFrame(function () {
+        dragRaf = 0;
+        state.plan = C.planDocument(currentCat().rules, previewSource().geoms);
+        applyOverlay();
+        renderPageInfo();
+        if (drag) syncRuleInputs(drag.ruleId);
+      });
+    }
+  }
+
+  function onHandleUp(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    var d = drag;
+    drag = null;
+    if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = 0; }
+    $('#sheet').classList.remove('dragging');
+    if (!d.started) return;
+    syncRuleInputs(d.ruleId);
+    refresh();
+    scheduleSave();
+    var cat = currentCat();
+    var rule = ruleIn(cat, d.ruleId);
+    if (!rule) return;
+    var changed = C.SIDES.some(function (k) { return rule[k] !== d.before[k]; });
+    if (!changed && !d.created) return;
+    var no = cat.rules.indexOf(rule) + 1;
+    toast(d.created ? d.page + '쪽만의 규칙(규칙 ' + no + ')을 만들어 바꿨습니다. 다른 쪽은 그대로입니다.' : '규칙 ' + no + '의 여백을 바꿨습니다.', {
+      label: '되돌리기',
+      run: function () {
+        var c = catById(d.catId);
+        var r = c ? ruleIn(c, d.ruleId) : null;
+        if (!r) return;
+        if (d.created) c.rules.splice(c.rules.indexOf(r), 1);
+        else C.SIDES.forEach(function (k) { r[k] = d.before[k]; });
+        renderRules(); refresh(); scheduleSave();
+      }
+    });
+  }
+
+  /** 지금 보는 쪽만 쓰는 규칙을 만든다 (현재 여백을 그대로 옮겨 옴) */
+  function splitPage() {
+    var item = state.plan && state.plan.pages[state.page - 1];
+    if (!item) return;
+    var cat = currentCat();
+    if (cat.rules.length >= C.MAX_RULES) { toast('한 카테고리에는 규칙을 ' + C.MAX_RULES + '개까지 만들 수 있습니다.'); return; }
+    var m = frameMargins(item);
+    var r = newRule(String(state.page));
+    r.label = state.page + '쪽';
+    C.SIDES.forEach(function (k) { r[k] = C.fmt(m[k]); });
+    cat.rules.push(r);
+    renderRulesKeepStage(); refresh(); scheduleSave();
+    var page = state.page;
+    toast(page + '쪽만의 규칙을 만들었습니다. 이제 테두리를 끌면 이 쪽만 바뀝니다.', {
+      label: '되돌리기',
+      run: function () {
+        var c = catById(cat.id);
+        var x = c ? ruleIn(c, r.id) : null;
+        if (!x) return;
+        c.rules.splice(c.rules.indexOf(x), 1);
+        renderRules(); refresh(); scheduleSave();
+      }
+    });
+  }
+
+  function renderDragHint() {
+    var box = $('#dragHint');
+    if (!box) return;
+    var txt = box.querySelector('span');
+    var btn = $('#splitBtn');
+    var src = previewSource();
+    var plan = state.plan;
+    var item = plan && plan.pages[state.page - 1];
+    if (!item || showingResult() || src.kind === 'loading' || src.kind === 'error') { box.hidden = true; return; }
+    box.hidden = false;
+    var pr = item.rule >= 0 ? plan.perRule[item.rule] : null;
+    var shared = !!(pr && pr.pages.length > 1);
+    var others = shared ? C.compressPages(pr.pages, 4) : '';
+    if (item.rule < 0) txt.textContent = '이 쪽에는 규칙이 없습니다. 점선 테두리를 끌면 이 쪽만의 규칙이 새로 생깁니다.';
+    else if (item.status === 'error') txt.textContent = '여백이 이 쪽보다 커서 자르지 않습니다. 점선 테두리를 끌면 ' + (shared ? '이 쪽만의 규칙이 새로 생기고, 다른 쪽은 그대로입니다.' : '여백을 다시 정할 수 있습니다.');
+    else if (shared) txt.textContent = '점선 테두리를 끌어 여백을 정할 수 있습니다. 같은 규칙을 쓰는 ' + others + '쪽이 함께 바뀝니다.';
+    else txt.textContent = '점선 테두리를 끌어 이 쪽의 여백을 정할 수 있습니다.';
+    btn.hidden = !shared;
   }
 
   function updatePager() {
@@ -999,6 +1211,7 @@
     updatePager();
     renderPageInfo();
     renderStrip();
+    renderDragHint();
     renderPreview();
   }
 
@@ -1167,6 +1380,7 @@
     renderRunState();
     renderPreview();
     renderPageInfo();
+    renderDragHint();
     if (items.length && !items.some(function (it) { return it.error; })) {
       var saveLabel = IS_PWA && IS_IOS && SHARE_PDF ? '저장·공유' : '저장';
       toast(items.length === 1 ? '다 잘랐습니다. “' + saveLabel + '”을 눌러 파일을 받으세요.' : items.length + '개 파일을 다 잘랐습니다. 하나씩 받거나 한 번에 받으세요.');
@@ -1317,6 +1531,7 @@
     renderRunState();
     renderResults();
     updatePager();
+    renderDragHint();
   }
 
   function renderAll() {
@@ -1400,7 +1615,7 @@
       var b = e.target.closest('[data-mode]');
       if (!b) return;
       state.previewMode = b.getAttribute('data-mode');
-      updatePager(); applyOverlay(); renderPageInfo(); renderPreview();
+      updatePager(); applyOverlay(); renderPageInfo(); renderDragHint(); renderPreview();
     });
     var strip = $('#strip');
     var scrub = false;
@@ -1419,6 +1634,11 @@
       if (b) goPage(Number(b.getAttribute('data-page')));
     });
 
+    $('#ov').addEventListener('pointerdown', onHandleDown);
+    window.addEventListener('pointermove', onHandleMove, { passive: false });
+    window.addEventListener('pointerup', onHandleUp);
+    window.addEventListener('pointercancel', onHandleUp);
+    $('#splitBtn').addEventListener('click', splitPage);
     $('#runBtn').addEventListener('click', runCrop);
     $('#results').addEventListener('click', onResultsClick);
     $('#exportBtn').addEventListener('click', exportSettings);

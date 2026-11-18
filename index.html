@@ -67,6 +67,7 @@
           <li>쪽 번호는 PDF 파일 안의 순서(첫 쪽이 1)입니다. 종이에 인쇄된 쪽 번호와 다를 수 있습니다.</li>
           <li>한 페이지에 규칙이 여러 개 해당하면 목록에서 아래쪽 규칙이 적용됩니다. 기본 규칙을 위에, 예외 규칙을 아래에 두세요.</li>
           <li>어느 규칙에도 해당하지 않는 페이지는 자르지 않습니다.</li>
+          <li>미리보기의 점선 테두리를 끌어서 여백을 정할 수도 있습니다. 끌면 그 쪽에 적용된 규칙의 숫자가 바뀌고, 같은 규칙을 쓰는 다른 쪽도 함께 바뀝니다. 그 쪽만 바꾸려면 “이 쪽만 따로”를 먼저 누르세요.</li>
           <li>위·아래·왼쪽·오른쪽은 화면에 보이는 방향이 기준입니다. 회전된 페이지도 마찬가지입니다.</li>
           <li>이 도구는 PDF의 보이는 영역을 줄이는 방식으로 자릅니다. 잘린 부분의 내용은 파일 안에 남아 있으므로, 개인정보를 지우는 용도라면 PDF 편집기의 가리기(redaction) 기능을 쓰세요.</li>
         </ul>
@@ -95,7 +96,7 @@
               <div class="band b-bottom"><span></span></div>
               <div class="band b-left"><span></span></div>
               <div class="band b-right"><span></span></div>
-              <div class="keep"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+              <div class="keep"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i><span class="h e-t" data-edge="t"></span><span class="h e-b" data-edge="b"></span><span class="h e-l" data-edge="l"></span><span class="h e-r" data-edge="r"></span><span class="h c-tl" data-edge="tl"></span><span class="h c-tr" data-edge="tr"></span><span class="h c-bl" data-edge="bl"></span><span class="h c-br" data-edge="br"></span></div>
             </div>
             <p class="badge" id="badge"></p>
           </div>
@@ -110,6 +111,7 @@
             <button type="button" data-mode="result" aria-pressed="false">자른 결과</button>
           </div>
         </div>
+        <div class="drag-hint" id="dragHint" hidden><span></span><button id="splitBtn" class="btn small" type="button" hidden>이 쪽만 따로</button></div>
         <p class="page-info" id="pageInfo" aria-live="polite"></p>
         <canvas class="strip" id="strip" height="28" role="img" aria-label="쪽별 적용 규칙"></canvas>
         <ul class="legend" id="legend" aria-label="쪽별 적용 규칙 요약"></ul>
